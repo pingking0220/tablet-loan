@@ -1,0 +1,17 @@
+{
+  "name": "平板借還站",
+  "short_name": "平板借還",
+  "description": "掃描平板條碼借出、歸還，自動記錄借用日期與借用人",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F2F6FF",
+  "theme_color": "#2E7BFF",
+  "lang": "zh-Hant",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

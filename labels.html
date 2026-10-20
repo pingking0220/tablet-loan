@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>平板條碼標籤產生器</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#2B2B3A;--muted:#6B6E85;--soft:#8A8DA3;--c:#2E8BFF;--g:linear-gradient(135deg,#2E7BFF,#3FA9FF 55%,#4FCFE6);--sh:rgba(46,123,255,.28)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans TC',system-ui,"PingFang TC","Microsoft JhengHei",sans-serif;color:var(--ink);background:#F2F6FF;min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:-1;
+  background:radial-gradient(circle at 10% 15%,#E3F4FF 0,transparent 34%),radial-gradient(circle at 90% 10%,#EEEBFF 0,transparent 32%),
+  radial-gradient(circle at 85% 90%,#E7FBEF 0,transparent 34%),linear-gradient(160deg,#F2F6FF,#F4F2FF 55%,#F2FBF8)}
+header{display:flex;align-items:center;gap:12px;padding:16px 22px;max-width:1280px;margin:0 auto}
+header h1{font-size:22px;font-weight:900;letter-spacing:.04em}
+header h1 b{background:var(--g);-webkit-background-clip:text;background-clip:text;color:transparent}
+header .sp{flex:1}
+header a{color:var(--muted);font-size:14px;text-decoration:none;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.7)}
+header a:hover{background:#fff;color:var(--ink)}
+.layout{display:grid;grid-template-columns:360px 1fr;gap:18px;max-width:1280px;margin:0 auto;padding:0 22px 30px;align-items:start}
+.panel{background:rgba(255,255,255,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid #fff;border-radius:24px;
+  padding:18px;box-shadow:0 18px 50px rgba(46,123,255,.10);position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
+.tabs{display:flex;gap:6px;background:#EEF2FB;padding:5px;border-radius:16px;margin-bottom:14px}
+.tabs button{flex:1;border:0;background:transparent;font:inherit;font-weight:700;font-size:15px;padding:9px 6px;border-radius:12px;color:var(--muted);cursor:pointer}
+.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 3px 10px rgba(43,43,58,.08)}
+fieldset{border:0;margin-bottom:14px}
+legend{font-size:13px;font-weight:900;color:var(--c);letter-spacing:.08em;margin-bottom:8px}
+label.f{display:block;font-size:13.5px;color:var(--muted);margin-bottom:8px}
+label.f span{display:block;margin-bottom:4px;font-weight:500}
+input[type=text],input[type=number],select,textarea{width:100%;font:inherit;font-size:15px;color:var(--ink);padding:9px 11px;border:2px solid #E3E8F5;border-radius:12px;background:#fff;outline:none}
+input:focus,select:focus,textarea:focus{border-color:#9CC4FF}
+textarea{resize:vertical;min-height:84px;line-height:1.6}
+.row{display:grid;gap:8px}
+.r2{grid-template-columns:1fr 1fr}.r3{grid-template-columns:1fr 1fr 1fr}.r4{grid-template-columns:repeat(4,1fr)}
+.chk{display:flex;align-items:center;gap:8px;font-size:14.5px;margin:6px 0;cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--c)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg label{flex:1;min-width:120px;cursor:pointer}
+.seg input{display:none}
+.seg span{display:block;text-align:center;padding:9px 8px;border:2px solid #E3E8F5;border-radius:12px;font-size:14px;font-weight:700;background:#fff}
+.seg small{display:block;font-weight:400;color:var(--soft);font-size:12px}
+.seg input:checked+span{border-color:var(--c);background:#EAF3FF;color:#1B5FCC}
+.hint{font-size:12.5px;color:var(--soft);line-height:1.6;margin-top:4px}
+.warn{font-size:13px;color:#B45309;background:#FFF6E5;border-radius:12px;padding:8px 10px;margin-top:8px;line-height:1.6}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;border:0;font:inherit;font-weight:900;font-size:17px;letter-spacing:.06em;color:#fff;
+  height:52px;border-radius:16px;background:var(--g);box-shadow:0 10px 22px var(--sh);cursor:pointer;margin-top:6px}
+.btn:active{transform:scale(.98)}
+.sum{font-size:14px;color:var(--muted);margin:10px 0 2px;text-align:center}
+.sum b{color:var(--ink)}
+.custom{display:none;margin-top:8px}
+.custom.show{display:block}
+
+/* 預覽區 */
+.preview{min-width:0}
+.pvhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;color:var(--muted);font-size:14px}
+.pages{display:flex;flex-direction:column;align-items:center;gap:18px}
+.page{width:210mm;height:297mm;background:#fff;position:relative;overflow:hidden;box-shadow:0 10px 40px rgba(43,43,58,.12);flex-shrink:0}
+.lb{position:absolute;overflow:hidden;color:#000;font-family:'Noto Sans TC',"PingFang TC","Microsoft JhengHei",sans-serif;display:flex}
+.page.cut .lb{outline:.2mm dashed #B8BECC;outline-offset:-.1mm}
+.lb .qr{flex-shrink:0;display:block}
+.lb .qr svg{width:100%;height:100%;display:block}
+.lb .bc svg{width:100%;height:100%;display:block}
+.lb .tx{display:flex;flex-direction:column;justify-content:center;min-width:0;line-height:1.15}
+.lb .tt{font-weight:700;white-space:nowrap;overflow:hidden;color:#333}
+.lb .id{font-weight:900;white-space:nowrap;letter-spacing:.02em}
+.lb .ft{white-space:nowrap;overflow:hidden;color:#555}
+.lb.col{flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.lb.col .tx{align-items:center}
+.empty{color:var(--soft);padding:60px 0;text-align:center}
+
+@media (max-width:900px){.layout{grid-template-columns:1fr}.panel{position:static;max-height:none}}
+@media print{
+  @page{size:A4;margin:0}
+  body{background:#fff}
+  body::before,header,.panel,.pvhead{display:none !important}
+  .layout{display:block;padding:0;margin:0;max-width:none}
+  .pages{gap:0;zoom:1 !important}
+  .page{box-shadow:none;break-after:page;page-break-after:always}
+  .page:last-child{break-after:auto;page-break-after:auto}
+  .page.cut .lb{outline-color:#999}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏷️ <b>平板條碼標籤</b>產生器</h1>
+  <div class="sp"></div>
+  <a href="./">← 回借還站</a>
+</header>
+
+<div class="layout">
+  <div class="panel">
+    <div class="tabs" role="tablist">
+      <button class="on" data-mode="dev">平板標籤</button>
+      <button data-mode="person">借用證</button>
+    </div>
+
+    <!-- 平板標籤 -->
+    <div id="devOpts">
+      <fieldset>
+        <legend>平板編號</legend>
+        <div class="row r4">
+          <label class="f"><span>前綴</span><input type="text" id="prefix"></label>
+          <label class="f"><span>起</span><input type="number" id="start" min="0"></label>
+          <label class="f"><span>迄</span><input type="number" id="end" min="0"></label>
+          <label class="f"><span>位數</span><input type="number" id="digits" min="0" max="5"></label>
+        </div>
+        <label class="f"><span>另外加印的編號（每行一個，可留白）</span><textarea id="extraIds" placeholder="例如：教師用-01"></textarea></label>
+        <div class="hint">只要補印某幾台：起、迄填同一號即可（例：起 7、迄 7）。</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>條碼種類</legend>
+        <div class="seg">
+          <label><input type="radio" name="kind" value="qr" checked><span>QR Code<small>建議・任何角度都掃得到</small></span></label>
+          <label><input type="radio" name="kind" value="c128"><span>一維條碼<small>Code 128・可配合條碼槍</small></span></label>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- 借用證 -->
+    <div id="personOpts" style="display:none">
+      <fieldset>
+        <legend>借用人名單</legend>
+        <label class="f"><span>每行一位：姓名,身分,班級座號（後兩項可省略）</span>
+          <textarea id="people" rows="7" placeholder="王小明,教師&#10;林老師,教師,三年二班導師&#10;陳小美,學生,301班05號"></textarea></label>
+        <div class="hint">常來借平板的老師可以印一張借用證：在借還站掃一下證件就自動帶入姓名，不用打字。</div>
+      </fieldset>
+    </div>
+
+    <fieldset>
+      <legend>版面</legend>
+      <label class="f"><span>標籤尺寸</span><select id="preset"></select></label>
+      <div class="custom" id="customBox">
+        <div class="row r2">
+          <label class="f"><span>寬 (mm)</span><input type="number" id="cw" step="0.1"></label>
+          <label class="f"><span>高 (mm)</span><input type="number" id="ch" step="0.1"></label>
+          <label class="f"><span>欄數</span><input type="number" id="ccols"></label>
+          <label class="f"><span>列數</span><input type="number" id="crows"></label>
+          <label class="f"><span>上邊界 (mm)</span><input type="number" id="ctop" step="0.1"></label>
+          <label class="f"><span>左邊界 (mm)</span><input type="number" id="cleft" step="0.1"></label>
+          <label class="f"><span>左右間距 (mm)</span><input type="number" id="cgx" step="0.1"></label>
+          <label class="f"><span>上下間距 (mm)</span><input type="number" id="cgy" step="0.1"></label>
+        </div>
+      </div>
+      <div class="row r2">
+        <label class="f"><span>每台印幾張</span><input type="number" id="copies" min="1" max="5" value="1"></label>
+        <label class="f"><span>跳過前幾格</span><input type="number" id="skip" min="0" value="0"></label>
+      </div>
+      <div class="hint">「跳過前幾格」給用過一半的標籤貼紙用。</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>標籤文字</legend>
+      <label class="chk"><input type="checkbox" id="showTitle" checked>上方標題</label>
+      <input type="text" id="title">
+      <label class="chk"><input type="checkbox" id="showFoot" checked>下方提示</label>
+      <input type="text" id="foot">
+      <label class="chk"><input type="checkbox" id="cut" checked>印出裁切虛線（用一般 A4 紙自己剪時勾選）</label>
+    </fieldset>
+
+    <div id="warn"></div>
+    <div class="sum" id="sum"></div>
+    <button class="btn" id="printBtn">🖨️ 列印</button>
+    <div class="hint" style="text-align:center;margin-top:8px">列印時請選「實際大小／縮放 100%」、邊界「無」，條碼尺寸才會正確。<br>貼好後建議覆一層透明膠帶，比較耐磨。</div>
+  </div>
+
+  <div class="preview">
+    <div class="pvhead"><span id="pvinfo"></span><span>預覽（實際列印為 A4）</span></div>
+    <div class="pages" id="pages"></div>
+  </div>
+</div>
+
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/JsBarcode.all.min.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var cfg = TL.loadCfg();
+  var mode = 'dev';
+
+  // 標籤尺寸：auto=自動排在 A4（10mm 邊界）；sheet=對應市售 A4 標籤貼紙
+  var PRESETS = [
+    { k: 'q30', n: '小 30×30 mm（貼平板背面，A4 自行剪）', w: 30, h: 30, auto: true, dev: true },
+    { k: 'm50', n: '中 50×30 mm（A4 自行剪）', w: 50, h: 30, auto: true, dev: true },
+    { k: 'l70', n: '大 70×40 mm（A4 自行剪）', w: 70, h: 40, auto: true, dev: true },
+    { k: 's65', n: 'A4 標籤貼紙 65 格（38.1×21.2，5×13）', w: 38.1, h: 21.2, cols: 5, rows: 13, top: 10.7, left: 4.65, gx: 2.5, gy: 0, dev: true },
+    { k: 's24', n: 'A4 標籤貼紙 24 格（63.5×33.9，3×8）', w: 63.5, h: 33.9, cols: 3, rows: 8, top: 12.9, left: 6.45, gx: 2.5, gy: 0, dev: true },
+    { k: 's21', n: 'A4 標籤貼紙 21 格（63.5×38.1，3×7）', w: 63.5, h: 38.1, cols: 3, rows: 7, top: 15.15, left: 7.25, gx: 2.5, gy: 0, dev: true },
+    { k: 'card', n: '信用卡大小 85.6×54 mm（A4 自行剪）', w: 85.6, h: 54, auto: true, person: true },
+    { k: 'card70', n: '小卡 70×40 mm（A4 自行剪）', w: 70, h: 40, auto: true, person: true },
+    { k: 'custom', n: '自訂…', custom: true, dev: true, person: true }
+  ];
+
+  function fillPresets() {
+    var sel = $('preset'), keep = sel.value;
+    sel.innerHTML = '';
+    PRESETS.forEach(function (p) {
+      if ((mode === 'dev' && !p.dev) || (mode === 'person' && !p.person)) return;
+      var o = document.createElement('option'); o.value = p.k; o.textContent = p.n; sel.appendChild(o);
+    });
+    if ([].some.call(sel.options, function (o) { return o.value === keep; })) sel.value = keep;
+    syncCustom(true);
+  }
+
+  function preset() { var k = $('preset').value; return PRESETS.filter(function (p) { return p.k === k; })[0]; }
+
+  // 換尺寸時把目前數值填進自訂欄位，方便微調
+  function syncCustom(fill) {
+    var p = preset();
+    $('customBox').classList.toggle('show', !!p.custom);
+    if (fill && !p.custom) {
+      var g = geometry(p);
+      $('cw').value = g.w; $('ch').value = g.h; $('ccols').value = g.cols; $('crows').value = g.rows;
+      $('ctop').value = +g.top.toFixed(2); $('cleft').value = +g.left.toFixed(2); $('cgx').value = g.gx; $('cgy').value = g.gy;
+    }
+  }
+
+  function geometry(p) {
+    if (p.custom) {
+      return { w: +$('cw').value || 30, h: +$('ch').value || 30, cols: +$('ccols').value || 1, rows: +$('crows').value || 1,
+        top: +$('ctop').value || 0, left: +$('cleft').value || 0, gx: +$('cgx').value || 0, gy: +$('cgy').value || 0 };
+    }
+    if (p.auto) {
+      var gap = 4, mw = 190, mh = 277;
+      var cols = Math.max(1, Math.floor((mw + gap) / (p.w + gap))), rows = Math.max(1, Math.floor((mh + gap) / (p.h + gap)));
+      var left = (210 - (cols * p.w + (cols - 1) * gap)) / 2, top = (297 - (rows * p.h + (rows - 1) * gap)) / 2;
+      return { w: p.w, h: p.h, cols: cols, rows: rows, top: top, left: left, gx: gap, gy: gap };
+    }
+    return { w: p.w, h: p.h, cols: p.cols, rows: p.rows, top: p.top, left: p.left, gx: p.gx, gy: p.gy };
+  }
+
+  // 估算文字寬度（中文約 1em、英數約 0.6em），算出塞得下的字級
+  function emWidth(s) {
+    var w = 0;
+    for (var i = 0; i < s.length; i++) w += /[⺀-￿]/.test(s[i]) ? 1 : (/[A-Z0-9]/.test(s[i]) ? 0.64 : 0.56);
+    return w || 1;
+  }
+  function fit(s, width, maxSize) { return Math.max(1.4, Math.min(maxSize, width / emWidth(s))); }
+
+  function items() {
+    var out = [];
+    var copies = Math.max(1, Math.min(5, parseInt($('copies').value, 10) || 1));
+    if (mode === 'dev') {
+      var ids = TL.rangeIds($('prefix').value, $('start').value, $('end').value, $('digits').value);
+      $('extraIds').value.split(/\r?\n/).forEach(function (s) { s = s.split(/[,，\t]/)[0].trim(); if (s && ids.indexOf(s) < 0) ids.push(s); });
+      ids.forEach(function (id) { for (var c = 0; c < copies; c++) out.push({ code: id, big: id }); });
+    } else {
+      $('people').value.split(/\r?\n/).forEach(function (line) {
+        var p = line.split(/[,，\t]/).map(function (s) { return s.trim(); });
+        if (!p[0]) return;
+        var sub = [p[1], p[2]].filter(Boolean).join('・');
+        for (var c = 0; c < copies; c++) out.push({ code: TL.personCode(p[0], p[1], p[2]), big: p[0], sub: sub });
+      });
+    }
+    return out;
+  }
+
+  function labelHtml(it, g, kind) {
+    var w = g.w, h = g.h, pad = Math.max(1, Math.min(2.5, Math.min(w, h) * 0.07));
+    var title = $('showTitle').checked ? $('title').value.trim() : '';
+    var foot = $('showFoot').checked ? $('foot').value.trim() : '';
+    if (mode === 'person') foot = it.sub || foot;
+    var style = 'width:' + w + 'mm;height:' + h + 'mm;padding:' + pad + 'mm;';
+    var iw = w - pad * 2, ih = h - pad * 2;
+
+    if (kind === 'c128') {
+      var titleSize = title ? Math.min(ih * 0.13, fit(title, iw, 4)) : 0;
+      var footSize = foot && ih > 22 ? Math.min(ih * 0.11, fit(foot, iw, 3.2)) : 0;
+      var idSize = Math.min(ih * 0.2, fit(it.big, iw, 8));
+      var bcH = ih - titleSize * 1.25 - idSize * 1.2 - footSize * 1.25 - 0.6;
+      return '<div class="lb col" style="' + style + '">' +
+        (titleSize ? '<div class="tt" style="font-size:' + titleSize + 'mm">' + TL.esc(title) + '</div>' : '') +
+        '<div class="bc" style="width:' + iw + 'mm;height:' + Math.max(5, bcH) + 'mm">' + barcodeSvg(it.code) + '</div>' +
+        '<div class="id" style="font-size:' + idSize + 'mm">' + TL.esc(it.big) + '</div>' +
+        (footSize ? '<div class="ft" style="font-size:' + footSize + 'mm">' + TL.esc(foot) + '</div>' : '') +
+        '</div>';
+    }
+
+    var qr = TL.qrSvg(it.code);
+    if (w / h >= 1.3) {
+      // 橫式：QR 在左、文字在右
+      var q = ih, tw = iw - q - pad;
+      var tS = title ? Math.min(ih * 0.15, fit(title, tw, 4.2)) : 0;
+      var fS = foot ? Math.min(ih * 0.13, fit(foot, tw, 3.6)) : 0;
+      var iS = Math.min(ih * (mode === 'person' ? 0.3 : 0.36), fit(it.big, tw, mode === 'person' ? 9 : 11));
+      return '<div class="lb" style="' + style + 'align-items:center;gap:' + pad + 'mm">' +
+        '<div class="qr" style="width:' + q + 'mm;height:' + q + 'mm">' + qr + '</div>' +
+        '<div class="tx" style="width:' + tw + 'mm">' +
+        (tS ? '<div class="tt" style="font-size:' + tS + 'mm;margin-bottom:' + tS * 0.35 + 'mm">' + TL.esc(title) + '</div>' : '') +
+        '<div class="id" style="font-size:' + iS + 'mm">' + TL.esc(it.big) + '</div>' +
+        (fS ? '<div class="ft" style="font-size:' + fS + 'mm;margin-top:' + fS * 0.4 + 'mm">' + TL.esc(foot) + '</div>' : '') +
+        '</div></div>';
+    }
+    // 直式／方形：QR 在上、編號在下
+    var tS2 = title && ih >= 26 ? Math.min(ih * 0.09, fit(title, iw, 3.4)) : 0;
+    var fS2 = foot && ih >= 34 ? Math.min(ih * 0.08, fit(foot, iw, 3)) : 0;
+    var iS2 = Math.min(ih * 0.17, fit(it.big, iw, 9));
+    var q2 = Math.min(iw, ih - tS2 * 1.25 - iS2 * 1.15 - fS2 * 1.25);
+    return '<div class="lb col" style="' + style + '">' +
+      (tS2 ? '<div class="tt" style="font-size:' + tS2 + 'mm">' + TL.esc(title) + '</div>' : '') +
+      '<div class="qr" style="width:' + q2 + 'mm;height:' + q2 + 'mm">' + qr + '</div>' +
+      '<div class="id" style="font-size:' + iS2 + 'mm">' + TL.esc(it.big) + '</div>' +
+      (fS2 ? '<div class="ft" style="font-size:' + fS2 + 'mm">' + TL.esc(foot) + '</div>' : '') +
+      '</div>';
+  }
+
+  var bcCache = {};
+  function barcodeSvg(text) {
+    if (bcCache[text]) return bcCache[text];
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    try {
+      JsBarcode(svg, text, { format: 'CODE128', displayValue: false, margin: 0, width: 2, height: 60, background: '#ffffff' });
+    } catch (e) { return '<div style="color:#c00;font-size:3mm">無法產生</div>'; }
+    svg.removeAttribute('width'); svg.removeAttribute('height');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    return (bcCache[text] = svg.outerHTML);
+  }
+
+  function render() {
+    var p = preset(), g = geometry(p);
+    var kind = mode === 'person' ? 'qr' : document.querySelector('input[name=kind]:checked').value;
+    var list = items();
+    var skip = Math.max(0, parseInt($('skip').value, 10) || 0);
+    var per = g.cols * g.rows;
+    var host = $('pages');
+    var warn = [];
+
+    if (kind === 'c128' && g.w < 35) warn.push('一維條碼建議標籤寬度至少 35 mm，太窄平板鏡頭不容易掃到；小標籤請改用 QR Code。');
+    if (kind === 'qr' && Math.min(g.w, g.h) < 18) warn.push('標籤太小，QR Code 可能不易掃描，建議至少 20 mm。');
+    if (mode === 'person' && list.some(function (it) { return /[|]/.test(it.big); })) warn.push('姓名不能包含「|」符號。');
+    $('warn').innerHTML = warn.map(function (s) { return '<div class="warn">⚠️ ' + TL.esc(s) + '</div>'; }).join('');
+
+    if (!list.length) {
+      host.innerHTML = '<div class="empty">' + (mode === 'dev' ? '請輸入平板編號範圍' : '請輸入借用人名單') + '</div>';
+      $('sum').innerHTML = ''; $('pvinfo').textContent = '';
+      return;
+    }
+    var slots = skip + list.length, pages = Math.ceil(slots / per), html = '';
+    for (var pg = 0; pg < pages; pg++) {
+      html += '<div class="page' + ($('cut').checked ? ' cut' : '') + '">';
+      for (var s = 0; s < per; s++) {
+        var idx = pg * per + s - skip;
+        if (idx < 0 || idx >= list.length) continue;
+        var r = Math.floor(s / g.cols), c = s % g.cols;
+        var x = g.left + c * (g.w + g.gx), y = g.top + r * (g.h + g.gy);
+        html += labelHtml(list[idx], g, kind).replace('style="', 'style="left:' + x + 'mm;top:' + y + 'mm;');
+      }
+      html += '</div>';
+    }
+    host.innerHTML = html;
+    $('sum').innerHTML = '共 <b>' + list.length + '</b> 張・每頁 ' + per + ' 格・<b>' + pages + '</b> 頁 A4';
+    $('pvinfo').textContent = (mode === 'dev' ? '平板標籤' : '借用證') + '｜' + g.w + '×' + g.h + ' mm';
+    scalePreview();
+  }
+
+  function scalePreview() {
+    var host = $('pages'), avail = host.parentNode.clientWidth;
+    var pageW = 210 * 96 / 25.4;
+    host.style.zoom = Math.min(1, (avail - 4) / pageW);
+  }
+
+  function setMode(m) {
+    mode = m;
+    [].forEach.call(document.querySelectorAll('.tabs button'), function (b) { b.classList.toggle('on', b.dataset.mode === m); });
+    $('devOpts').style.display = m === 'dev' ? '' : 'none';
+    $('personOpts').style.display = m === 'person' ? '' : 'none';
+    $('foot').placeholder = m === 'person' ? '（借用證會顯示身分與班級）' : '';
+    $('title').value = m === 'dev' ? (cfg.school + ' ' + cfg.station).trim() : (cfg.school + ' 平板借用證').trim();
+    fillPresets();
+    if (m === 'person' && preset().k !== 'custom') $('preset').value = 'card';
+    if (m === 'dev' && !preset().dev) $('preset').value = 'q30';
+    syncCustom(true);
+    render();
+  }
+
+  // 初值：同一台裝置有借還站設定時直接沿用
+  $('prefix').value = cfg.prefix; $('start').value = cfg.start; $('end').value = cfg.end; $('digits').value = cfg.digits;
+  $('extraIds').value = String(cfg.extra || '').split(/\r?\n/).map(function (l) { return l.split(/[,，\t]/)[0].trim(); }).filter(Boolean).join('\n');
+  $('foot').value = '借還請掃描此條碼';
+
+  document.querySelector('.tabs').addEventListener('click', function (e) { if (e.target.dataset.mode) setMode(e.target.dataset.mode); });
+  $('preset').addEventListener('change', function () { syncCustom(true); render(); });
+  document.querySelector('.panel').addEventListener('input', function (e) { if (e.target.id !== 'preset') render(); });
+  $('printBtn').addEventListener('click', function () { window.print(); });
+  window.addEventListener('resize', scalePreview);
+  if (/[?&]mode=person/.test(location.search)) setMode('person'); else setMode('dev');
+})();
+</script>
+</body>
+</html>

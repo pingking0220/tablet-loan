@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>平板借還站</title>
+<meta name="description" content="力行國小平板車借還站：掃描平板條碼借出、歸還，自動記錄借用日期與借用人">
+<meta name="theme-color" content="#2E7BFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="平板借還">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#2B2B3A;--muted:#6B6E85;--soft:#8A8DA3;--line:#E3E8F5;
+  --blue:#2E7BFF;--g:linear-gradient(135deg,#2E7BFF,#3FA9FF 55%,#4FCFE6);--sh:rgba(46,123,255,.28);
+  --green:#1FA383;--gg:linear-gradient(135deg,#1FA383,#45C4A0 55%,#7ED7C1);
+  --orange:#F07A2E;--red:#E5484D}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{font-family:'Noto Sans TC',system-ui,"PingFang TC","Microsoft JhengHei",sans-serif;color:var(--ink);background:#F2F6FF;overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body::before{content:"";position:fixed;inset:0;z-index:-1;
+  background:radial-gradient(circle at 10% 12%,#E3F4FF 0,transparent 34%),radial-gradient(circle at 92% 8%,#EEEBFF 0,transparent 30%),
+  radial-gradient(circle at 85% 92%,#E7FBEF 0,transparent 34%),radial-gradient(circle at 8% 90%,#FFF1D6 0,transparent 30%),
+  linear-gradient(160deg,#F2F6FF,#F4F2FF 55%,#F2FBF8)}
+input,textarea,select{-webkit-user-select:text;user-select:text}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+[hidden]{display:none !important}
+
+/* 標題列 */
+.bar{display:flex;align-items:center;gap:10px;height:64px;padding:0 16px;padding-top:env(safe-area-inset-top)}
+.brand{display:flex;align-items:center;gap:10px;font-size:21px;font-weight:900;letter-spacing:.04em;white-space:nowrap}
+.brand .logo{width:38px;height:38px}
+.brand b{background:var(--g);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stats{display:flex;gap:6px;margin-left:6px}
+.st{font-size:14px;font-weight:700;padding:5px 11px;border-radius:999px;white-space:nowrap}
+.st b{font-size:16px;margin-left:2px}
+.st.in{background:#E2F8F0;color:#147A5F}.st.out{background:#FFEFE3;color:#B44A10}.st.late{background:#FFE4E4;color:#B4232A}
+.sp{flex:1}
+.sync{font-size:13px;color:var(--muted);white-space:nowrap}
+.sync.err{color:var(--red)}
+.clock{font-size:15px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tb{height:42px;padding:0 14px;border-radius:14px;background:rgba(255,255,255,.85);font-size:15px;font-weight:700;box-shadow:0 3px 10px rgba(43,43,58,.06);white-space:nowrap}
+.tb:active{transform:scale(.96)}
+
+/* 主畫面 */
+.kiosk{display:grid;grid-template-columns:1.12fr 1fr;gap:16px;padding:0 16px 16px;height:calc(100% - 64px)}
+.cam{position:relative;border-radius:28px;overflow:hidden;background:#0E1630;box-shadow:0 20px 50px rgba(14,22,48,.25);min-height:0}
+#reader{position:absolute !important;inset:0;width:auto !important;border:0 !important}
+#reader video{position:absolute;inset:0;width:100% !important;height:100% !important;object-fit:cover}
+#reader canvas,#reader img,#qr-shaded-region{display:none !important}
+.cam.mirror #reader video{transform:scaleX(-1)}
+.aim{position:absolute;left:50%;top:50%;width:min(62%,62vh);aspect-ratio:1;transform:translate(-50%,-55%);pointer-events:none}
+.aim i{position:absolute;width:44px;height:44px;border:6px solid rgba(255,255,255,.92);border-radius:6px}
+.aim i:nth-child(1){left:0;top:0;border-right:0;border-bottom:0;border-top-left-radius:22px}
+.aim i:nth-child(2){right:0;top:0;border-left:0;border-bottom:0;border-top-right-radius:22px}
+.aim i:nth-child(3){left:0;bottom:0;border-right:0;border-top:0;border-bottom-left-radius:22px}
+.aim i:nth-child(4){right:0;bottom:0;border-left:0;border-top:0;border-bottom-right-radius:22px}
+.aim .laser{position:absolute;left:8%;right:8%;height:3px;border-radius:3px;background:linear-gradient(90deg,transparent,#5EE0FF,transparent);
+  box-shadow:0 0 14px #5EE0FF;animation:laser 2.2s ease-in-out infinite}
+@keyframes laser{0%,100%{top:12%}50%{top:86%}}
+.camhint{position:absolute;left:0;right:0;bottom:0;padding:16px 70px 18px;text-align:center;color:#fff;font-size:20px;font-weight:700;letter-spacing:.06em;
+  background:linear-gradient(transparent,rgba(8,12,30,.72));text-shadow:0 2px 6px rgba(0,0,0,.4)}
+.flip{position:absolute;right:12px;bottom:12px;width:52px;height:52px;border-radius:16px;background:rgba(255,255,255,.18);color:#fff;font-size:24px;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.sleep,.camerr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:#fff;padding:24px;
+  background:radial-gradient(circle at 50% 40%,#24346B,#0E1630 70%)}
+.sleep .big{font-size:64px;animation:tap 1.6s ease-in-out infinite}
+.sleep h2{font-size:30px;font-weight:900;letter-spacing:.08em}
+.sleep p,.camerr p{font-size:17px;opacity:.8;line-height:1.7}
+.camerr h2{font-size:24px;font-weight:900}
+.camerr button{margin-top:6px;height:50px;padding:0 26px;border-radius:16px;background:#fff;color:var(--ink);font-weight:900;font-size:17px}
+@keyframes tap{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(10px) scale(.92)}}
+.flash{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.85);min-width:62%;max-width:90%;padding:26px 30px;border-radius:28px;
+  color:#fff;text-align:center;opacity:0;pointer-events:none;transition:opacity .18s,transform .25s cubic-bezier(.3,1.5,.5,1);box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.flash.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.flash .ic{font-size:56px;line-height:1;margin-bottom:6px}
+.flash .t1{font-size:34px;font-weight:900;letter-spacing:.04em}
+.flash .t2{font-size:18px;margin-top:6px;opacity:.95}
+.flash.add{background:var(--g)}.flash.back{background:var(--gg)}.flash.err{background:linear-gradient(135deg,#E5484D,#FF6F6F)}
+.flash.done{background:linear-gradient(135deg,#5B6CFF,#8A5BFF 60%,#B05BFF)}
+
+/* 右側面板 */
+.side{position:relative;display:flex;flex-direction:column;min-height:0;background:rgba(255,255,255,.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid #fff;border-radius:28px;box-shadow:0 20px 56px rgba(46,123,255,.12);overflow:hidden}
+.pane{display:flex;flex-direction:column;min-height:0;flex:1;padding:20px 22px;overflow:auto;-webkit-overflow-scrolling:touch}
+.hello{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.hello svg{width:84px;height:84px;flex-shrink:0;animation:bob 3.2s ease-in-out infinite}
+.hello h2{font-size:24px;font-weight:900;letter-spacing:.04em;line-height:1.35}
+.hello p{color:var(--muted);font-size:15px;margin-top:2px}
+.how{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.how div{border-radius:20px;padding:14px 14px 12px}
+.how h3{font-size:18px;font-weight:900;margin-bottom:6px}
+.how ol{list-style:none;counter-reset:s;font-size:15px;line-height:1.55}
+.how li{counter-increment:s;position:relative;padding-left:26px;margin-bottom:4px}
+.how li::before{content:counter(s);position:absolute;left:0;top:2px;width:20px;height:20px;border-radius:50%;color:#fff;font-size:12px;font-weight:900;
+  display:flex;align-items:center;justify-content:center}
+.how .b{background:#EAF3FF}.how .b h3{color:#1B5FCC}.how .b li::before{background:var(--blue)}
+.how .r{background:#E2F8F0}.how .r h3{color:#147A5F}.how .r li::before{background:var(--green)}
+.manual{display:flex;gap:8px;margin-bottom:16px}
+.manual input{flex:1;min-width:0;height:48px;font:inherit;font-size:16px;padding:0 14px;border:2px solid var(--line);border-radius:14px;outline:none;background:#fff}
+.manual input:focus{border-color:#9CC4FF}
+.manual button{height:48px;padding:0 18px;border-radius:14px;background:#EEF2FB;font-weight:700;white-space:nowrap}
+.sec{font-size:13px;font-weight:900;color:var(--soft);letter-spacing:.1em;margin:4px 0 8px}
+.recent{list-style:none}
+.recent li{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px dashed var(--line);font-size:15px}
+.recent li:last-child{border-bottom:0}
+.recent .tm{color:var(--soft);font-variant-numeric:tabular-nums;width:46px;flex-shrink:0}
+.recent .tag{font-size:12.5px;font-weight:700;padding:2px 9px;border-radius:999px;flex-shrink:0}
+.recent .tag.o{background:#FFEFE3;color:#B44A10}.recent .tag.i{background:#E2F8F0;color:#147A5F}
+.recent .dv{font-weight:900}
+.recent .nm{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.none{color:var(--soft);font-size:14.5px;padding:8px 4px}
+
+/* 借用表單 */
+.bh{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.bh h2{font-size:22px;font-weight:900}
+.bh span{font-size:14.5px;color:var(--muted)}
+.cart{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 6px 0 14px;border-radius:14px;background:#EAF3FF;color:#1B5FCC;font-weight:900;font-size:17px;
+  animation:pop .3s cubic-bezier(.3,1.6,.5,1)}
+.chip button{width:30px;height:30px;border-radius:10px;color:#6B8AC9;font-size:18px}
+.chip button:active{background:#D6E6FF}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
+.roles{display:flex;gap:6px;background:#EEF2FB;padding:5px;border-radius:16px;margin-bottom:12px}
+.roles button{flex:1;height:44px;border-radius:12px;font-weight:700;font-size:17px;color:var(--muted)}
+.roles button.on{background:#fff;color:var(--ink);box-shadow:0 3px 10px rgba(43,43,58,.08)}
+.lbl{font-size:14px;font-weight:700;color:var(--muted);margin:10px 0 6px}
+.pick{display:flex;flex-wrap:wrap;gap:6px}
+.pick button{min-width:50px;height:46px;padding:0 10px;border-radius:13px;background:#fff;border:2px solid var(--line);font-size:18px;font-weight:700}
+.pick button.on{border-color:var(--blue);background:#EAF3FF;color:#1B5FCC}
+.fin{width:100%;height:50px;font:inherit;font-size:18px;padding:0 14px;border:2px solid var(--line);border-radius:14px;outline:none;background:#fff}
+.fin:focus{border-color:#9CC4FF}
+.seat{width:120px}
+.names{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.names button{height:38px;padding:0 12px;border-radius:12px;background:#F4F6FC;font-size:15px;font-weight:500}
+.names button:active{background:#E3E9F7}
+.person{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:18px;background:#EEEBFF;margin-bottom:10px}
+.person .pn{font-size:22px;font-weight:900}
+.person .pr{color:var(--muted);font-size:15px}
+.person button{margin-left:auto;height:38px;padding:0 12px;border-radius:12px;background:#fff;font-weight:700;font-size:14px}
+.err{color:var(--red);font-size:15px;font-weight:700;min-height:22px;margin-top:10px}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;height:62px;border-radius:18px;background:#fff;border:2px solid #DADCE0;
+  font-size:19px;font-weight:700;color:#3C4043;box-shadow:0 4px 12px rgba(43,43,58,.06)}
+.gbtn svg{width:26px;height:26px}
+.gbtn:active{background:#F4F6FC;transform:scale(.98)}
+.gbtn[disabled]{opacity:.6}
+.gnote{font-size:14px;color:var(--muted);line-height:1.7;margin:8px 2px 4px}
+.gnote b{color:var(--ink)}
+.person .pe{font-size:13.5px;color:var(--muted);word-break:break-all}
+.loggingout{position:fixed;inset:0;z-index:90;border:0;width:100%;font-family:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:rgba(242,246,255,.92);font-size:22px;font-weight:900;color:var(--ink)}
+.loggingout small{font-size:15px;font-weight:500;color:var(--muted)}
+.seatrow{display:flex;align-items:center;gap:10px}
+.seatv{width:74px;height:50px;flex-shrink:0;border-radius:14px;border:2px solid var(--blue);background:#EAF3FF;display:flex;align-items:center;justify-content:center;
+  font-size:26px;font-weight:900;color:#1B5FCC}
+.seatv.empty{border-color:var(--line);background:#fff;color:#C3C8D8}
+.kp{display:flex;flex-wrap:wrap;gap:5px;flex:1}
+.kp button{flex:1 0 34px;max-width:46px;height:46px;border-radius:12px;background:#fff;border:2px solid var(--line);font-size:18px;font-weight:700}
+.kp button:active{background:#EAF3FF}
+.pickbtn{width:100%;height:56px;border-radius:18px;background:#fff;border:2px dashed #B9CCF5;color:#1B5FCC;font-size:18px;font-weight:900;margin-bottom:12px}
+.pickbtn:active{transform:scale(.98)}
+.addmore{align-self:flex-start;height:40px;padding:0 14px;border-radius:13px;border:2px dashed #B9CCF5;color:#1B5FCC;font-weight:700;font-size:15px;background:#fff;margin:-6px 0 14px}
+.roles.pk{flex:1;margin:0;max-width:440px}
+.pickhint{font-size:15px;color:var(--muted);margin-bottom:12px}
+.tile.sel{border-color:var(--blue);background:#EAF3FF;box-shadow:0 0 0 3px rgba(46,123,255,.22)}
+.tile.sel::after{content:"✓";position:absolute;right:10px;top:10px;width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;font-weight:900;
+  display:flex;align-items:center;justify-content:center}
+.regbox{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.reghint{font-size:14px;color:var(--muted)}
+.reghint.wait{color:#1B5FCC;font-weight:700;animation:blink 1.2s ease-in-out infinite}
+@keyframes blink{50%{opacity:.4}}
+.regform{margin-top:14px;padding:14px;border-radius:16px;background:#F4F6FC}
+.regid{font-size:15px;margin-bottom:10px}
+.regid b{font-size:20px;font-family:ui-monospace,Menlo,Consolas,monospace;margin:0 6px}
+.regid span{color:var(--orange);font-weight:700}
+.acts{display:flex;gap:10px;padding:14px 22px 18px;border-top:1px solid var(--line);background:rgba(255,255,255,.6)}
+.acts .cancel{height:60px;padding:0 22px;border-radius:18px;background:#EEF2FB;font-weight:700;font-size:17px}
+.acts .ok{flex:1;height:60px;border-radius:18px;background:var(--g);color:#fff;font-weight:900;font-size:21px;letter-spacing:.06em;box-shadow:0 10px 22px var(--sh)}
+.acts .ok:active,.acts .cancel:active{transform:scale(.98)}
+
+/* 提示 */
+.toasts{position:absolute;left:50%;top:14px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:60;width:min(560px,94%);pointer-events:none}
+.toast{display:flex;align-items:center;gap:12px;padding:12px 14px 12px 18px;border-radius:18px;background:#2B2B3A;color:#fff;font-size:16px;
+  box-shadow:0 12px 30px rgba(0,0,0,.25);pointer-events:auto;animation:pop .3s cubic-bezier(.3,1.6,.5,1)}
+.toast.ok{background:#147A5F}.toast.bad{background:#B4232A}
+.toast span{flex:1}
+.toast button{height:38px;padding:0 14px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;font-weight:900;white-space:nowrap}
+
+/* 彈出視窗 */
+.modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(20,26,50,.42);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.sheet{width:min(1040px,100%);max-height:100%;display:flex;flex-direction:column;background:#F7F9FF;border-radius:28px;box-shadow:0 30px 80px rgba(0,0,0,.3);overflow:hidden}
+.sheet.sm{width:min(440px,100%)}
+.sheet.md{width:min(560px,100%)}
+.sh{display:flex;align-items:center;gap:10px;padding:16px 18px 12px 22px}
+.sh h2{font-size:21px;font-weight:900}
+.sh .x{margin-left:auto;width:44px;height:44px;border-radius:14px;background:#EEF2FB;font-size:20px}
+.sb{padding:4px 22px 20px;overflow:auto;-webkit-overflow-scrolling:touch}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.fchip{height:38px;padding:0 14px;border-radius:12px;background:#fff;border:2px solid var(--line);font-weight:700;font-size:14.5px}
+.fchip.on{border-color:var(--blue);background:#EAF3FF;color:#1B5FCC}
+.search{flex:1;min-width:150px;height:40px;font:inherit;font-size:15px;padding:0 12px;border:2px solid var(--line);border-radius:12px;outline:none;background:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.tile{position:relative;text-align:left;padding:12px 14px;border-radius:18px;background:#fff;border:2px solid #E2F8F0;min-height:92px}
+.tile .tid{font-size:19px;font-weight:900}
+.tile .ts{display:inline-block;margin-top:4px;font-size:12.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#E2F8F0;color:#147A5F}
+.tile .tw{font-size:13.5px;color:var(--muted);margin-top:5px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile.out{border-color:#FFD9BF;background:#FFF8F2}.tile.out .ts{background:#FFEFE3;color:#B44A10}
+.tile.late{border-color:#FFC2C2;background:#FFF4F4}.tile.late .ts{background:#FFE4E4;color:#B4232A}
+.tile:active{transform:scale(.97)}
+
+.kv{display:grid;grid-template-columns:96px 1fr;gap:8px 12px;font-size:16px;margin:4px 0 14px}
+.kv dt{color:var(--muted)}
+.kv dd{font-weight:700}
+.mbtns{display:flex;flex-direction:column;gap:10px}
+.mb{height:54px;border-radius:16px;font-weight:900;font-size:17px;background:#EEF2FB}
+.mb.pri{background:var(--gg);color:#fff;box-shadow:0 8px 18px rgba(31,163,131,.28)}
+.mb.blue{background:var(--g);color:#fff;box-shadow:0 8px 18px var(--sh)}
+.mb.danger{background:#FFE4E4;color:#B4232A}
+
+/* 密碼 */
+.pin{display:flex;justify-content:center;gap:12px;margin:6px 0 10px}
+.pin i{width:18px;height:18px;border-radius:50%;border:2px solid #B8C2DD}
+.pin i.f{background:var(--blue);border-color:var(--blue)}
+.pin.shake{animation:shake .4s}
+@keyframes shake{20%,60%{transform:translateX(-10px)}40%,80%{transform:translateX(10px)}}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pad button{height:62px;border-radius:18px;background:#fff;font-size:26px;font-weight:700;box-shadow:0 3px 10px rgba(43,43,58,.06)}
+.pad button:active{background:#EAF3FF}
+.pinmsg{text-align:center;color:var(--muted);font-size:14.5px;min-height:22px;margin-bottom:6px}
+
+/* 管理 */
+.atabs{display:flex;gap:6px;background:#EEF2FB;padding:5px;border-radius:16px;margin:0 22px 12px;overflow-x:auto}
+.atabs button{flex:1;height:42px;padding:0 12px;border-radius:12px;font-weight:700;font-size:15.5px;color:var(--muted);white-space:nowrap}
+.atabs button.on{background:#fff;color:var(--ink);box-shadow:0 3px 10px rgba(43,43,58,.08)}
+.card{background:#fff;border-radius:20px;padding:16px 18px;margin-bottom:12px;box-shadow:0 3px 12px rgba(43,43,58,.04)}
+.card h3{font-size:16.5px;font-weight:900;margin-bottom:10px}
+.fl{display:block;font-size:14px;color:var(--muted);margin-bottom:10px}
+.fl span{display:block;font-weight:700;margin-bottom:5px}
+.fl input,.fl select,.fl textarea{width:100%;font:inherit;font-size:16px;color:var(--ink);padding:10px 12px;border:2px solid var(--line);border-radius:12px;outline:none;background:#fff}
+.fl textarea{min-height:96px;resize:vertical;line-height:1.6}
+.fl input:focus,.fl textarea:focus,.fl select:focus{border-color:#9CC4FF}
+.g4{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.note{font-size:13.5px;color:var(--soft);line-height:1.7}
+.note b{color:var(--muted)}
+.welcome{background:linear-gradient(135deg,#EAF3FF,#EEEBFF);border-radius:20px;padding:14px 18px;margin-bottom:12px;font-size:15px;line-height:1.7}
+.welcome b{font-size:17px}
+.brow{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.btn{height:46px;padding:0 18px;border-radius:14px;font-weight:900;font-size:15.5px;background:#EEF2FB;white-space:nowrap}
+.btn.pri{background:var(--g);color:#fff;box-shadow:0 6px 14px var(--sh)}
+.btn.danger{background:#FFE4E4;color:#B4232A}
+.btn:active{transform:scale(.97)}
+.syncinfo{font-size:14.5px;line-height:1.8;margin-top:8px;color:var(--muted)}
+.syncinfo b{color:var(--ink)}
+table.log{width:100%;border-collapse:collapse;font-size:14.5px;background:#fff;border-radius:16px;overflow:hidden}
+table.log th{text-align:left;font-size:13px;color:var(--soft);font-weight:700;padding:10px 10px;background:#F4F6FC;white-space:nowrap}
+table.log td{padding:10px 10px;border-top:1px solid #EEF1F8;vertical-align:middle}
+table.log td.d{font-weight:900;white-space:nowrap}
+table.log td.t{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--muted)}
+table.log tr.void td{color:#B8BECC;text-decoration:line-through}
+table.log .s{font-size:12.5px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.s.o{background:#FFEFE3;color:#B44A10}.s.i{background:#E2F8F0;color:#147A5F}.s.v{background:#F1F2F6;color:#8A8DA3}.s.l{background:#FFE4E4;color:#B4232A}
+table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2FB;font-size:13.5px;font-weight:700;margin:2px 0;white-space:nowrap}
+.logsum{font-size:14px;color:var(--muted);margin:0 0 10px}
+.tablewrap{overflow-x:auto;border-radius:16px}
+
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+
+/* 直式或窄螢幕：鏡頭在上、面板在下 */
+@media (orientation:portrait),(max-width:860px){
+  .kiosk{grid-template-columns:1fr;grid-template-rows:minmax(260px,42%) 1fr}
+  .stats .st.in{display:none}
+  .clock{display:none}
+}
+@media (max-width:640px){
+  body{overflow:auto}
+  .kiosk{height:auto;grid-template-rows:340px auto}
+  .side{min-height:520px}
+  .brand{font-size:18px}.brand .logo{width:32px;height:32px}
+  .stats,.sync{display:none}
+  .how{grid-template-columns:1fr}
+  .g4{grid-template-columns:1fr 1fr}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="4" width="44" height="56" rx="9" fill="#2E7BFF"/><rect x="15" y="10" width="34" height="40" rx="4" fill="#E9F4FF"/><circle cx="32" cy="55" r="2.4" fill="#BFDBFF"/><circle cx="25" cy="27" r="2.6" fill="#2B2B3A"/><circle cx="39" cy="27" r="2.6" fill="#2B2B3A"/><path d="M25 35q7 6 14 0" stroke="#2B2B3A" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="21" cy="33" r="2.6" fill="#FFB3C7"/><circle cx="43" cy="33" r="2.6" fill="#FFB3C7"/></svg>
+    <span><b id="stName">平板車</b> 借還站</span>
+  </div>
+  <div class="stats">
+    <span class="st in">在車上<b id="nIn">0</b></span>
+    <span class="st out">借出<b id="nOut">0</b></span>
+    <span class="st late" id="lateBox" hidden>逾期<b id="nLate">0</b></span>
+  </div>
+  <div class="sp"></div>
+  <span class="sync" id="sync"></span>
+  <span class="clock" id="clock"></span>
+  <button class="tb" id="btnStatus">📋 現況</button>
+  <button class="tb" id="btnAdmin" aria-label="管理">⚙️</button>
+</header>
+
+<main class="kiosk">
+  <section class="cam" id="cam">
+    <div id="reader"></div>
+    <div class="aim" aria-hidden="true"><i></i><i></i><i></i><i></i><div class="laser"></div></div>
+    <div class="camhint" id="camhint">把平板背面的條碼對準鏡頭</div>
+    <button class="flip" id="flipCam" aria-label="切換鏡頭">🔄</button>
+    <div class="sleep" id="camSleep">
+      <div class="big">👆</div>
+      <h2>點一下開始借還</h2>
+      <p>借平板、還平板都從這裡掃描條碼</p>
+    </div>
+    <div class="camerr" id="camErr" hidden>
+      <div style="font-size:52px">📷</div>
+      <h2>無法開啟相機</h2>
+      <p id="camErrMsg">請允許這個網頁使用相機。</p>
+      <button id="camRetry">再試一次</button>
+      <p style="font-size:14px">也可以在右邊輸入平板編號，或接條碼掃描器使用。</p>
+    </div>
+    <div class="toasts" id="toasts"></div>
+    <div class="flash" id="flash"><div class="ic"></div><div class="t1"></div><div class="t2"></div></div>
+  </section>
+
+  <section class="side">
+    <!-- 待機：說明＋最近紀錄 -->
+    <div class="pane" id="pIdle">
+      <div class="hello">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><ellipse cx="60" cy="112" rx="30" ry="5" fill="#2E7BFF" opacity=".12"/><rect x="26" y="12" width="68" height="92" rx="14" fill="#2E7BFF"/><rect x="33" y="21" width="54" height="68" rx="6" fill="#E9F4FF"/><circle cx="60" cy="96" r="3.4" fill="#BFDBFF"/><g><circle cx="49" cy="49" r="4.2" fill="#2B2B3A"/><circle cx="71" cy="49" r="4.2" fill="#2B2B3A"/><circle cx="50.5" cy="47.5" r="1.4" fill="#fff"/><circle cx="72.5" cy="47.5" r="1.4" fill="#fff"/></g><path d="M48 61q12 10 24 0" stroke="#2B2B3A" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="42" cy="59" r="4.5" fill="#FFB3C7"/><circle cx="78" cy="59" r="4.5" fill="#FFB3C7"/><path d="M94 40q14-8 12-22" stroke="#FFC24B" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="106" cy="16" r="6" fill="#FFC24B"/></svg>
+        <div><h2>嗨！要借平板還是還平板？</h2><p>都只要掃描平板背面的條碼</p></div>
+      </div>
+      <div class="how">
+        <div class="b"><h3>📤 借平板</h3><ol><li>掃描平板條碼</li><li id="howWho">選身分、填名字</li><li>按「確認借出」</li></ol></div>
+        <div class="r"><h3>📥 還平板</h3><ol><li>掃描平板條碼</li><li>聽到「叮咚」就完成</li><li>放回車上插電</li></ol></div>
+      </div>
+      <button class="pickbtn" id="btnPick">👆 不用掃描，直接點選平板編號</button>
+      <form class="manual" id="manualForm" autocomplete="off">
+        <input id="manual" placeholder="鏡頭掃不到？輸入平板編號" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button type="submit">送出</button>
+      </form>
+      <div class="sec">最近紀錄</div>
+      <ul class="recent" id="recent"></ul>
+    </div>
+
+    <!-- 借用中：清單＋借用人 -->
+    <div class="pane" id="pBorrow" hidden>
+      <div class="bh"><h2>借用清單</h2><span>還要借其他平板？繼續掃描就好</span></div>
+      <div class="cart" id="cart"></div>
+      <button class="addmore" id="btnAddMore">＋ 點選加入其他平板</button>
+      <div id="personBox" hidden></div>
+      <div id="whoBox">
+        <div class="roles" id="roles">
+          <button data-r="學生" class="on">🧒 學生</button>
+          <button data-r="教師">👩‍🏫 老師</button>
+          <button data-r="其他">🙋 其他</button>
+        </div>
+        <div id="gBox" hidden>
+          <button class="gbtn" id="btnGoogle"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.28-3.14.76-4.59l-7.98-6.19A23.94 23.94 0 0 0 0 24c0 3.87.92 7.53 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg><span id="gLabel">用學校 Google 帳號登入</span></button>
+          <div class="gnote" id="gNote"></div>
+        </div>
+        <div id="stuBox">
+          <div class="lbl">年級</div><div class="pick" id="gradePick"></div>
+          <div class="lbl">班級</div><div class="pick" id="classPick"></div>
+          <div class="lbl">座號</div>
+          <div class="seatrow"><div class="seatv empty" id="seatV">—</div><div class="kp" id="seatPad"></div></div>
+        </div>
+        <div id="nameBox">
+          <div class="lbl" id="nameLbl">姓名（選填）</div>
+          <input class="fin" id="name" maxlength="20" placeholder="寫下你的名字" enterkeyhint="done" autocomplete="off">
+          <div class="names" id="names"></div>
+        </div>
+      </div>
+      <div class="lbl">用途（選填）</div>
+      <input class="fin" id="memo" maxlength="40" placeholder="例：自然課分組報告" enterkeyhint="done" autocomplete="off">
+      <div class="err" id="bErr"></div>
+    </div>
+    <div class="acts" id="bActs" hidden>
+      <button class="cancel" id="btnCancel">取消</button>
+      <button class="ok" id="btnConfirm">確認借出</button>
+    </div>
+  </section>
+</main>
+
+
+<!-- 新裝置第一次開啟 -->
+<div class="modal" id="mWelcome" hidden>
+  <div class="sheet md">
+    <div class="sb" style="padding-top:26px;text-align:center">
+      <div style="font-size:60px;line-height:1">📱</div>
+      <h2 style="font-size:24px;font-weight:900;margin:10px 0 8px">平板借還站</h2>
+      <p class="note" style="font-size:16px;line-height:1.8;margin-bottom:18px">這個網頁是給<b>平板車上的「借還平板」</b>用的。<br>老師、同學要借還平板，請到平板車上操作。</p>
+      <div class="mbtns">
+        <a class="mb blue" href="guide.html" style="display:flex;align-items:center;justify-content:center;text-decoration:none">看怎麼借還平板</a>
+        <button class="mb" id="btnSetupHere">我是管理者：把這台設定成借還平板</button>
+        <a class="mb" href="https://pingking0220.github.io/" style="display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit">🏠 回行政服務首頁</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 現況 -->
+<div class="modal" id="mStatus" hidden>
+  <div class="sheet">
+    <div class="sh"><h2>📋 平板現況</h2><span class="note" id="statusSum"></span><button class="x" data-close>✕</button></div>
+    <div class="sb">
+      <div class="filters" id="statusFilters">
+        <button class="fchip on" data-f="all">全部</button>
+        <button class="fchip" data-f="out">借出中</button>
+        <button class="fchip" data-f="late">逾期</button>
+        <button class="fchip" data-f="in">在車上</button>
+        <input class="search" id="statusQ" placeholder="搜尋編號或借用人" autocomplete="off">
+      </div>
+      <div class="grid" id="statusGrid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 點選平板（不用掃描） -->
+<div class="modal" id="mPick" hidden>
+  <div class="sheet">
+    <div class="sh">
+      <div class="roles pk" id="pickTabs"><button data-m="borrow" class="on">📤 借平板</button><button data-m="return">📥 還平板</button></div>
+      <button class="x" data-close>✕</button>
+    </div>
+    <div class="sb"><p class="pickhint" id="pickHint"></p><div class="grid" id="pickGrid"></div></div>
+    <div class="acts"><button class="cancel" data-close>取消</button><button class="ok" id="pickOk">下一步</button></div>
+  </div>
+</div>
+
+<!-- 單台詳細 -->
+<div class="modal" id="mDetail" hidden>
+  <div class="sheet md">
+    <div class="sh"><h2 id="dTitle"></h2><button class="x" data-close>✕</button></div>
+    <div class="sb" id="dBody"></div>
+  </div>
+</div>
+
+<!-- 管理密碼 -->
+<div class="modal" id="mPin" hidden>
+  <div class="sheet sm">
+    <div class="sh"><h2>🔒 輸入管理密碼</h2><button class="x" data-close>✕</button></div>
+    <div class="sb">
+      <div class="pin" id="pinDots"></div>
+      <div class="pinmsg" id="pinMsg"></div>
+      <div class="pad" id="pinPad"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 管理 -->
+<div class="modal" id="mAdmin" hidden>
+  <div class="sheet">
+    <div class="sh"><h2>⚙️ 管理</h2><a class="note" href="https://pingking0220.github.io/" style="margin-left:8px">🏠 行政服務首頁</a><button class="x" data-close>✕</button></div>
+    <div class="atabs" id="atabs">
+      <button data-t="log" class="on">借用紀錄</button>
+      <button data-t="dev">平板清單</button>
+      <button data-t="set">基本設定</button>
+      <button data-t="card">感應卡</button>
+      <button data-t="cloud">雲端同步</button>
+      <button data-t="label">列印條碼</button>
+    </div>
+    <div class="sb">
+      <!-- 紀錄 -->
+      <div data-p="log">
+        <div class="filters" id="logFilters">
+          <button class="fchip on" data-r="1">今天</button>
+          <button class="fchip" data-r="7">7 天</button>
+          <button class="fchip" data-r="30">30 天</button>
+          <button class="fchip" data-r="0">全部</button>
+          <input class="search" id="logQ" placeholder="搜尋編號、借用人、班級" autocomplete="off">
+          <button class="btn" id="btnCsv">⬇️ 匯出 Excel(CSV)</button>
+        </div>
+        <div class="logsum" id="logSum"></div>
+        <div class="tablewrap"><table class="log" id="logTable"></table></div>
+      </div>
+
+      <!-- 平板清單 -->
+      <div data-p="dev" hidden>
+        <div class="card">
+          <h3>平板編號範圍</h3>
+          <div class="g4">
+            <label class="fl"><span>前綴</span><input id="sPrefix"></label>
+            <label class="fl"><span>起</span><input id="sStart" type="number" min="0"></label>
+            <label class="fl"><span>迄</span><input id="sEnd" type="number" min="0"></label>
+            <label class="fl"><span>位數</span><input id="sDigits" type="number" min="0" max="5"></label>
+          </div>
+          <label class="fl"><span>其他平板／原有條碼對照（每行一台，可留白）</span>
+            <textarea id="sExtra" placeholder="教師用-01&#10;iPad-05,31601-0012345   ← 逗號後面放這台原本的財產條碼，掃哪一個都認得"></textarea></label>
+          <div class="note" id="devPreview"></div>
+        </div>
+        <div class="brow"><button class="btn pri" id="saveDev">儲存平板清單</button></div>
+      </div>
+
+      <!-- 基本設定 -->
+      <div data-p="set" hidden>
+        <div class="welcome" id="welcome" hidden><b>👋 第一次使用</b><br>請確認平板車名稱、平板編號（「平板清單」分頁）並改掉預設管理密碼 <b>1234</b>，按「儲存設定」後就可以開始借還。</div>
+        <div class="card">
+          <h3>借還站</h3>
+          <div class="g2">
+            <label class="fl"><span>學校名稱</span><input id="sSchool"></label>
+            <label class="fl"><span>平板車名稱（多台車時用來區分）</span><input id="sStation"></label>
+          </div>
+          <div class="g2">
+            <label class="fl"><span>掃描用的鏡頭</span>
+              <select id="sCamera"><option value="user">前鏡頭（借還平板立著、面向使用者）</option><option value="environment">後鏡頭</option></select></label>
+            <label class="fl"><span>每個年級有幾班</span><input id="sClasses" type="number" min="1" max="20"></label>
+          </div>
+          <label class="fl"><span>管理密碼（4～6 位數字）</span><input id="sPin" inputmode="numeric" maxlength="6"></label>
+        </div>
+        <div class="card">
+          <h3>借用人身分驗證</h3>
+          <label class="fl"><span>借平板時怎麼確認是誰借的</span>
+            <select id="sAuth"><option value="google">登入學校 Google 帳號（學生／老師各自的網域）</option><option value="manual">不登入：學生點班級座號、老師打姓名</option></select></label>
+          <div class="g2">
+            <label class="fl"><span>學生帳號網域</span><input id="sStuDomain" autocapitalize="off" spellcheck="false"></label>
+            <label class="fl"><span>老師帳號網域</span><input id="sTchDomain" autocapitalize="off" spellcheck="false"></label>
+          </div>
+          <label class="fl" style="display:flex;align-items:center;gap:10px"><input type="checkbox" id="sAutoLogout" style="width:22px;height:22px">借完自動登出 Google（共用的借還平板請務必勾選，避免下一個人用前一個人的帳號）</label>
+          <div class="note">感應卡、借用證是管理者登錄過的身分，刷了就直接帶入，不需要再登入。</div>
+        </div>
+        <div class="brow"><button class="btn pri" id="saveSet">儲存設定</button></div>
+        <div class="card" style="margin-top:16px">
+          <h3>資料</h3>
+          <div class="note">借用紀錄存在這台借還平板裡；建議設定「雲端同步」自動備份到 Google 試算表，或定期匯出 CSV。</div>
+          <div class="brow"><button class="btn danger" id="btnWipe">清除這台的所有借用紀錄</button></div>
+        </div>
+      </div>
+
+      <!-- 感應卡 -->
+      <div data-p="card" hidden>
+        <div class="card">
+          <h3>📶 感應卡（選用）</h3>
+          <div class="note">iPad 本身不能讀卡，要外接 <b>USB 或藍牙「感應讀卡機」（13.56MHz、模擬鍵盤輸出／免驅動）</b>。接好後：<br>
+            ・學生證、教職員證、悠遊卡刷一下就帶入借用人，不用打字<br>
+            ・平板背面貼「抗金屬 NFC 貼紙」，也可以刷平板代替掃 QR Code</div>
+          <div class="regbox">
+            <button class="btn pri" id="regStart">📶 登錄一張卡</button>
+            <span class="reghint" id="regHint">按下後把卡片靠近讀卡機（也可以用鏡頭掃原有的條碼）</span>
+          </div>
+          <div class="regform" id="regForm" hidden>
+            <div class="regid">卡號 <b id="regUid"></b><span id="regWho"></span></div>
+            <div class="roles" id="regKind"><button data-k="p" class="on">🙋 這是借用人的卡</button><button data-k="d">📱 這是平板的貼紙／條碼</button></div>
+            <div id="regP">
+              <div class="g2">
+                <label class="fl"><span>姓名</span><input id="regName" maxlength="20" autocomplete="off"></label>
+                <label class="fl"><span>身分</span><select id="regRole"><option>學生</option><option>教師</option><option>其他</option></select></label>
+              </div>
+              <label class="fl"><span>班級座號（選填，例：302班5號）</span><input id="regCls" maxlength="20" autocomplete="off"></label>
+            </div>
+            <div id="regD" hidden><label class="fl"><span>綁定到哪一台平板</span><select id="regDev"></select></label></div>
+            <div class="brow"><button class="btn pri" id="regSave">儲存</button><button class="btn" id="regCancel">取消</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>已登錄的借用人卡（<span id="cardCount">0</span> 張）</h3>
+          <label class="fl"><span>每行一張：卡號,姓名,身分,班級座號（可以直接貼上學務處的名單；游標放在這裡刷卡會直接填入卡號）</span>
+            <textarea id="sCards" rows="8" placeholder="0012345678,王小明,學生,302班5號&#10;3A7F21C9,林美玲,教師"></textarea></label>
+          <div class="brow"><button class="btn pri" id="saveCards">儲存名單</button></div>
+          <div class="note" style="margin-top:8px">平板貼紙的卡號記在「平板清單」分頁（格式：編號,卡號）。</div>
+        </div>
+      </div>
+
+      <!-- 雲端同步 -->
+      <div data-p="cloud" hidden>
+        <div class="card">
+          <h3>Google 試算表同步（選用）</h3>
+          <div class="note">設定後每次借還都會自動寫進 Google 試算表的「借用紀錄」，「現況」工作表會顯示每台平板目前在誰手上；在辦公室電腦打開試算表就能查。網路斷線時會先存在平板裡，恢復連線後自動補傳。</div>
+          <label class="fl" style="margin-top:10px"><span>Apps Script 網址（…/exec）</span><input id="sGas" placeholder="https://script.google.com/macros/s/……/exec" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+          <div class="brow">
+            <button class="btn pri" id="saveGas">儲存並測試</button>
+            <button class="btn" id="syncNowBtn">立即同步</button>
+            <button class="btn" id="restoreBtn">從雲端還原紀錄</button>
+          </div>
+          <div class="syncinfo" id="syncInfo"></div>
+        </div>
+      </div>
+
+      <!-- 列印條碼 -->
+      <div data-p="label" hidden>
+        <div class="card">
+          <h3>🏷️ 平板條碼標籤</h3>
+          <div class="note">依照「平板清單」產生每台平板的 QR Code 標籤，可印在一般 A4 紙自己剪，或直接印在 A4 標籤貼紙上。建議在辦公室電腦開這個網址列印。</div>
+          <div class="brow"><a class="btn pri" href="labels.html" target="_blank" style="display:inline-flex;align-items:center;text-decoration:none">開啟標籤產生器</a></div>
+        </div>
+        <div class="card">
+          <h3>🪪 借用證</h3>
+          <div class="note">常來借的老師可以印一張借用證，在借還站先掃借用證、再掃平板，就不用打字。</div>
+          <div class="brow"><a class="btn" href="labels.html?mode=person" target="_blank" style="display:inline-flex;align-items:center;text-decoration:none">製作借用證</a></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/html5-qrcode.min.js"></script>
+<script src="common.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
