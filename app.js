@@ -501,7 +501,7 @@
     var conf = {
       fps: 12,
       disableFlip: false,
-      videoConstraints: { facingMode: cfg.camera, width: { ideal: 1280 }, height: { ideal: 720 } }
+      videoConstraints: { facingMode: cfg.camera, width: { ideal: 1920 }, height: { ideal: 1080 } }
     };
     scanner.start({ facingMode: cfg.camera }, conf, function (txt) { onCode(txt, 'camera'); }, function () {})
       .then(function () {

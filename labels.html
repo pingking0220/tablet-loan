@@ -185,7 +185,10 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
   var mode = 'dev';
 
   // 標籤尺寸：auto=自動排在 A4（10mm 邊界）；sheet=對應市售 A4 標籤貼紙
+  // mini=迷你：QR 直接佔滿 15 mm（含白邊），不留內距
   var PRESETS = [
+    { k: 'q15', n: '迷你 15×15 mm（只印 QR Code）', w: 15, h: 15, auto: true, dev: true, mini: 'qr' },
+    { k: 'q15t', n: '迷你 QR 15 mm＋編號（30×15 mm）', w: 30, h: 15, auto: true, dev: true, mini: 'side' },
     { k: 'q30', n: '小 30×30 mm（貼平板背面，A4 自行剪）', w: 30, h: 30, auto: true, dev: true },
     { k: 'm50', n: '中 50×30 mm（A4 自行剪）', w: 50, h: 30, auto: true, dev: true },
     { k: 'l70', n: '大 70×40 mm（A4 自行剪）', w: 70, h: 40, auto: true, dev: true },
@@ -269,6 +272,20 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
     var style = 'width:' + w + 'mm;height:' + h + 'mm;padding:' + pad + 'mm;';
     var iw = w - pad * 2, ih = h - pad * 2;
 
+    var p = preset();
+    if (p.mini) {
+      // 迷你：QR 佔滿標籤高度（SVG 本身已含白邊），不另外留內距
+      var qm = TL.qrSvg(it.code);
+      if (p.mini === 'qr') {
+        return '<div class="lb" style="width:' + w + 'mm;height:' + h + 'mm"><div class="qr" style="width:' + h + 'mm;height:' + h + 'mm">' + qm + '</div></div>';
+      }
+      var tw3 = w - h - 1;
+      var iS3 = Math.min(h * 0.32, fit(it.big, tw3, 6));
+      return '<div class="lb" style="width:' + w + 'mm;height:' + h + 'mm;align-items:center">' +
+        '<div class="qr" style="width:' + h + 'mm;height:' + h + 'mm">' + qm + '</div>' +
+        '<div class="tx" style="width:' + tw3 + 'mm"><div class="id" style="font-size:' + iS3 + 'mm">' + TL.esc(it.big) + '</div></div></div>';
+    }
+
     if (kind === 'c128') {
       var titleSize = title ? Math.min(ih * 0.13, fit(title, iw, 4)) : 0;
       var footSize = foot && ih > 22 ? Math.min(ih * 0.11, fit(foot, iw, 3.2)) : 0;
@@ -331,8 +348,20 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
     var host = $('pages');
     var warn = [];
 
+    if (p.mini && kind !== 'qr') { kind = 'qr'; warn.push('迷你尺寸只能用 QR Code，已自動改用 QR Code。'); }
     if (kind === 'c128' && g.w < 35) warn.push('一維條碼建議標籤寬度至少 35 mm，太窄平板鏡頭不容易掃到；小標籤請改用 QR Code。');
-    if (kind === 'qr' && Math.min(g.w, g.h) < 18) warn.push('標籤太小，QR Code 可能不易掃描，建議至少 20 mm。');
+    // QR 實際印出的大小與每一格的寬度（格子太小鏡頭就掃不到）
+    var qrNote = '';
+    if (kind === 'qr' && list.length) {
+      var longest = list.reduce(function (a, b) { return b.code.length > a.code.length ? b : a; });
+      var m = /class="qr" style="width:([\d.]+)mm/.exec(labelHtml(longest, g, kind));
+      if (m) {
+        var qmm = +m[1], cell = qmm / (TL.qrModules(longest.code) + 4);
+        qrNote = '・QR 約 <b>' + qmm.toFixed(1) + ' mm</b>（每格 ' + cell.toFixed(2) + ' mm）';
+        if (cell < 0.4) warn.push('QR Code 的格子只有 ' + cell.toFixed(2) + ' mm，平板鏡頭很可能掃不到，請把標籤加大或縮短編號。');
+        else if (cell < 0.55) warn.push('QR Code 偏小（每格 ' + cell.toFixed(2) + ' mm）：掃描時請把平板拿近到 10～15 公分。');
+      }
+    }
     if (mode === 'person' && list.some(function (it) { return /[|]/.test(it.big); })) warn.push('姓名不能包含「|」符號。');
     $('warn').innerHTML = warn.map(function (s) { return '<div class="warn">⚠️ ' + TL.esc(s) + '</div>'; }).join('');
 
@@ -354,7 +383,7 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
       html += '</div>';
     }
     host.innerHTML = html;
-    $('sum').innerHTML = '共 <b>' + list.length + '</b> 張・每頁 ' + per + ' 格・<b>' + pages + '</b> 頁 A4';
+    $('sum').innerHTML = '共 <b>' + list.length + '</b> 張・每頁 ' + per + ' 格・<b>' + pages + '</b> 頁 A4' + qrNote;
     $('pvinfo').textContent = (mode === 'dev' ? '平板標籤' : '借用證') + '｜' + g.w + '×' + g.h + ' mm';
     scalePreview();
   }

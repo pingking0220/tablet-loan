@@ -98,11 +98,24 @@
     return { name: p[0].trim(), role: (p[1] || '').trim(), cls: (p[2] || '').trim() };
   }
 
-  // 用 qrcode-generator 產生向量 SVG（列印清晰）
-  function qrSvg(text, ecc) {
-    var qr = qrcode(0, ecc || 'M');
-    qr.addData(text, 'Byte');
-    qr.make();
+  // 在不讓 QR 變大（格數不變）的前提下，用最高的容錯等級：小標籤刮傷、反光也比較掃得到
+  var qrCache = {};
+  function bestQr(text) {
+    if (qrCache[text]) return qrCache[text];
+    var make = function (e) { var q = qrcode(0, e); q.addData(text, 'Byte'); q.make(); return q; };
+    var best = make('L'), n = best.getModuleCount();
+    ['H', 'Q', 'M'].some(function (e) {
+      var q = make(e);
+      if (q.getModuleCount() === n) { best = q; return true; }
+      return false;
+    });
+    return (qrCache[text] = best);
+  }
+  function qrModules(text) { return bestQr(text).getModuleCount(); }
+
+  // 用 qrcode-generator 產生向量 SVG（列印清晰），四周留 2 格白邊
+  function qrSvg(text) {
+    var qr = bestQr(text);
     var n = qr.getModuleCount(), q = 2, d = '';
     for (var r = 0; r < n; r++) {
       for (var col = 0; col < n; col++) {
@@ -126,6 +139,6 @@
     KEY_CFG: KEY_CFG, DEFAULT_CFG: DEFAULT_CFG,
     lsGet: lsGet, lsSet: lsSet, loadCfg: loadCfg, saveCfg: saveCfg,
     norm: norm, pad: pad, rangeIds: rangeIds, buildDevices: buildDevices, buildCards: buildCards,
-    personCode: personCode, parsePerson: parsePerson, qrSvg: qrSvg, esc: esc
+    personCode: personCode, parsePerson: parsePerson, qrSvg: qrSvg, qrModules: qrModules, esc: esc
   };
 })(window);
