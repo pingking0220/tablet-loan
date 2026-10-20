@@ -219,7 +219,7 @@
       cfg.extra = (String(cfg.extra || '').replace(/\s+$/, '') + '\n' + text).replace(/^\n/, '');
       TL.saveCfg(cfg);
       devs = TL.buildDevices(cfg);
-      devicesDirty = true; queueSync();
+      markCfgChanged();
       hideUnknown();
       renderAll();
       toast('已把「' + text + '」加入平板清單', 'ok');
@@ -925,7 +925,7 @@
     cfg.cards = cardsText; cfg.extra = extra;
     TL.saveCfg(cfg);
     cards = TL.buildCards(cfg.cards); devs = TL.buildDevices(cfg);
-    devicesDirty = true; queueSync();
+    markCfgChanged();
     $('sCards').value = cfg.cards; $('sExtra').value = cfg.extra;
     renderCardCount();
     $('regForm').hidden = true;
@@ -937,7 +937,7 @@
     cfg.cards = $('sCards').value;
     TL.saveCfg(cfg);
     cards = TL.buildCards(cfg.cards);
-    devicesDirty = true; queueSync();
+    markCfgChanged();
     renderCardCount();
     toast('借用人卡名單已儲存，共 ' + cards.count + ' 張', 'ok');
   }
@@ -995,9 +995,8 @@
     cfg.prefix = d.prefix; cfg.start = parseInt(d.start, 10) || 0; cfg.end = parseInt(d.end, 10) || 0; cfg.digits = parseInt(d.digits, 10) || 0; cfg.extra = d.extra;
     TL.saveCfg(cfg);
     devs = TL.buildDevices(cfg);
-    devicesDirty = true;
+    markCfgChanged();
     renderAll();
-    queueSync();
     toast('平板清單已儲存，共 ' + list.length + ' 台', 'ok');
   }
 
@@ -1020,7 +1019,7 @@
     cfg.setupDone = true;
     TL.saveCfg(cfg);
     if (renamed) { meta.pullSince = 0; persist(); }
-    devicesDirty = true; queueSync();
+    markCfgChanged();
     $('welcome').hidden = true;
     renderAll();
     renderRole();
@@ -1088,7 +1087,7 @@
 
   // ---------- 雲端同步（Google Apps Script） ----------
   var sync = { busy: false, again: false, lastOk: 0, lastErr: '', lastPull: 0 };
-  var devicesDirty = true, syncTimer = 0;
+  var devicesDirty = !!cfg.cfgUpdated, syncTimer = 0, hashJoin = false;
 
   function queueSync() {
     if (!cfg.gasUrl) return;
@@ -1147,30 +1146,28 @@
     if (recs.length || devicesDirty || opt.push) {
       var payload = { station: cfg.station, loans: recs };
       // 平板清單、感應卡名單一起備份到試算表（換新借還平板時可以還原）
-      if (devicesDirty || opt.push) {
+      if ((devicesDirty || opt.push) && cfg.cfgUpdated) {
         payload.devices = devs.list.map(function (d) { return d.id; });
         payload.config = backupCfg();
         payload.cards = cfg.cards;
       }
       step = gasPost(payload).then(function (j) {
         (j.saved || []).forEach(function (id) { var l = byId[id]; if (!l || l.updated === sent[id]) delete dirty[id]; });
-        if (payload.devices) devicesDirty = false;
+        if (payload.devices || !cfg.cfgUpdated) devicesDirty = false;
+        if (j.cfgAccepted === false) sync.lastPull = 0;  // 雲端設定比較新：馬上拉回來
       });
     }
     return step.then(function () {
       if (!opt.pull && Date.now() - sync.lastPull < 5 * 60e3) return;
-      var q = { action: 'pull', station: cfg.station, since: opt.full ? 0 : meta.pullSince };
-      if (opt.full) q.full = 1;
+      var q = { action: 'pull', station: cfg.station, since: opt.full ? 0 : meta.pullSince, cfg: 1 };
       return gasGet(q).then(function (j) {
         var n = merge(j.loans);
         // 往前重疊 5 秒，避免同一毫秒內寫入的紀錄被漏掉（合併時舊資料不會蓋掉新資料）
         meta.pullSince = (j.time || Date.now()) - 5000;
         sync.lastPull = Date.now();
         if (n) reindex();
-        if (opt.full) {
-          toast('從雲端取回 ' + n + ' 筆新的或較新的紀錄', 'ok', 5000);
-          restoreCfg(j.config, j.cards);
-        }
+        applyCloudCfg(j.config, j.cards, !!opt.full);
+        if (opt.full) toast('從雲端取回 ' + n + ' 筆新的或較新的紀錄', 'ok', 5000);
       });
     }).then(function () {
       sync.lastOk = Date.now(); sync.lastErr = '';
@@ -1186,25 +1183,89 @@
     });
   }
 
-  var BACKUP_KEYS = ['school', 'prefix', 'start', 'end', 'digits', 'extra', 'classes', 'camera', 'auth', 'stuDomain', 'tchDomain', 'autoLogout'];
+  // 同一台平板車的所有借還平板共用這些設定（鏡頭、同步網址是每台自己的）
+  var BACKUP_KEYS = ['school', 'prefix', 'start', 'end', 'digits', 'extra', 'classes', 'auth', 'stuDomain', 'tchDomain', 'autoLogout', 'pin', 'cfgUpdated'];
   function backupCfg() {
     var o = {};
     BACKUP_KEYS.forEach(function (k) { o[k] = cfg[k]; });
     return o;
   }
-  function restoreCfg(conf, cardsText) {
-    if (!conf && !cardsText) return;
-    var diff = BACKUP_KEYS.some(function (k) { return conf && conf[k] !== undefined && String(conf[k]) !== String(cfg[k]); }) ||
-      (cardsText && cardsText !== cfg.cards);
-    if (!diff || !confirm('雲端也有「' + cfg.station + '」的平板清單與感應卡名單備份，要一起還原到這台嗎？')) return;
-    if (conf) BACKUP_KEYS.forEach(function (k) { if (conf[k] !== undefined) cfg[k] = conf[k]; });
-    if (cardsText) cfg.cards = cardsText;
+
+  // 管理者改了共用設定：記下修改時間，推到雲端讓其他借還平板跟著更新
+  function markCfgChanged() {
+    cfg.cfgUpdated = Date.now();
+    TL.saveCfg(cfg);
+    devicesDirty = true;
+    queueSync();
+  }
+
+  // 雲端設定比這台新就直接套用；force＝管理者按「從雲端還原」
+  function applyCloudCfg(conf, cardsText, force) {
+    if (!conf) return false;
+    var newer = Number(conf.cfgUpdated || 0) > Number(cfg.cfgUpdated || 0);
+    if (!newer && force !== 'always') {
+      if (!force) return false;
+      var diff = BACKUP_KEYS.some(function (k) { return k !== 'cfgUpdated' && conf[k] !== undefined && String(conf[k]) !== String(cfg[k]); }) ||
+        (cardsText || '') !== (cfg.cards || '');
+      if (!diff || !confirm('這台的設定比雲端新。確定要用雲端的設定蓋掉這台嗎？')) return false;
+    }
+    BACKUP_KEYS.forEach(function (k) { if (conf[k] !== undefined) cfg[k] = conf[k]; });
+    cfg.cards = cardsText || '';
+    cfg.setupDone = true;
     TL.saveCfg(cfg);
     devs = TL.buildDevices(cfg); cards = TL.buildCards(cfg.cards);
-    fillSettings();
+    if (!$('mAdmin').hidden) fillSettings();
     renderAll(); renderRole();
-    toast('已還原平板清單（' + devs.list.length + ' 台）與感應卡（' + cards.count + ' 張）', 'ok', 5000);
+    toast('已套用雲端上「' + cfg.station + '」的設定（平板 ' + devs.list.length + ' 台、感應卡 ' + cards.count + ' 張）', 'ok', 5000);
+    return true;
   }
+
+  // 新的借還平板：從雲端找已經設定好的平板車，一台就直接加入，多台讓管理者選
+  function joinFromCloud(quiet) {
+    if (!cfg.gasUrl) return Promise.resolve(false);
+    return gasGet({ action: 'stations' }).then(function (j) {
+      var list = j.stations || [];
+      if (!list.length) { if (!quiet) toast('雲端還沒有任何平板車的設定，請在這台完成設定', '', 6000); return false; }
+      if (list.length === 1) { adoptStation(list[0]); return true; }
+      $('stationList').innerHTML = list.map(function (st, i) {
+        var d = TL.buildDevices(st.config);
+        return '<button class="mb" data-i="' + i + '">' + esc(st.station) + '<small>' + d.list.length + ' 台平板' +
+          (d.list.length ? '（' + esc(d.list[0].id) + '…）' : '') + '</small></button>';
+      }).join('');
+      stationChoices = list;
+      ['mWelcome', 'mAdmin'].forEach(function (id) { $(id).hidden = true; });
+      openModal('mStation');
+      return true;
+    }, function (e) {
+      if (!quiet) toast('讀不到雲端設定：' + ((e && e.message) || e), 'bad', 6000);
+      return false;
+    });
+  }
+  var stationChoices = [];
+
+  function adoptStation(st) {
+    cfg.station = st.station;
+    meta.pullSince = 0;
+    applyCloudCfg(st.config, st.cards, 'always');
+    devicesDirty = false;
+    ['mWelcome', 'mAdmin', 'mStation'].forEach(function (id) { $(id).hidden = true; });
+    persist();
+    startCam();
+    syncNow({ pull: true, full: true });
+  }
+
+  // 連上雲端：設定過的平板直接同步；還沒上傳過設定的舊平板先問要用哪一邊；全新平板從雲端加入
+  function connectCloud() {
+    if (cfg.cfgUpdated) { devicesDirty = true; return syncNow({ push: true, pull: true, loud: true }); }
+    if (cfg.setupDone && confirm('這台已經有設定了。\n\n按「確定」：把這台的設定上傳到雲端（其他借還平板會跟著改）。\n按「取消」：改用雲端上已有的設定。')) {
+      markCfgChanged();
+      return syncNow({ push: true, pull: true, loud: true });
+    }
+    return joinFromCloud(false).then(function (joined) { if (!joined) return syncNow({ pull: true, loud: true }); });
+  }
+
+  // 設定連結：新平板用相機掃這個 QR 就會開啟借還站並自動加入
+  function setupLink() { return location.origin + location.pathname + '#gas=' + encodeURIComponent(cfg.gasUrl); }
 
   function renderSyncBadge() {
     var el = $('sync'), n = Object.keys(dirty).length;
@@ -1219,10 +1280,13 @@
 
   function renderSyncInfo() {
     var n = Object.keys(dirty).length;
-    $('syncInfo').innerHTML = !cfg.gasUrl ? '目前是<b>本機模式</b>：紀錄只存在這台借還平板裡。' :
+    $('syncInfo').innerHTML = !cfg.gasUrl ? '目前是<b>本機模式</b>：紀錄和設定只存在這台借還平板裡，換平板設定就不見了。' :
       '狀態：<b>' + (sync.busy ? '同步中…' : sync.lastErr ? '⚠️ ' + esc(sync.lastErr) : sync.lastOk ? '正常' : '尚未同步') + '</b><br>' +
       '待上傳：<b>' + n + '</b> 筆<br>' +
-      '上次成功：<b>' + (sync.lastOk ? esc(full(sync.lastOk)) : '—') + '</b>';
+      '上次成功：<b>' + (sync.lastOk ? esc(full(sync.lastOk)) : '—') + '</b><br>' +
+      '設定最後修改：<b>' + (cfg.cfgUpdated ? esc(full(cfg.cfgUpdated)) : '—') + '</b>';
+    $('setupBox').hidden = !cfg.gasUrl;
+    if (cfg.gasUrl) $('setupQr').innerHTML = TL.qrSvg(setupLink());
   }
 
   function saveGas() {
@@ -1232,11 +1296,10 @@
     TL.saveCfg(cfg);
     renderSyncBadge();
     if (!url) { renderSyncInfo(); toast('已改回本機模式', 'ok'); return; }
-    devicesDirty = true;
     $('syncInfo').innerHTML = '測試連線中…';
     gasGet({ action: 'ping' }).then(function (j) {
       toast('連線成功' + (j.sheet ? '：' + j.sheet : ''), 'ok', 5000);
-      return syncNow({ push: true, pull: true, loud: true });
+      return connectCloud();
     }, function (e) {
       toast('連不上：' + ((e && e.message) || e) + '。請確認部署時「誰可以存取」選「所有人」。', 'bad', 8000);
       sync.lastErr = (e && e.message) || String(e);
@@ -1316,6 +1379,16 @@
       regKind = b.dataset.k; renderRegKind();
     });
     $('saveCards').addEventListener('click', saveCards);
+    $('stationList').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-i]'); if (b) adoptStation(stationChoices[+b.dataset.i]);
+    });
+    $('stationNew').addEventListener('click', function () { closeModal('mStation'); cfg.setupDone = false; openAdmin('set'); });
+    $('copySetup').addEventListener('click', function () {
+      var link = setupLink();
+      (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(function () {
+        toast('已複製設定連結，可以傳到新的借還平板上開啟', 'ok');
+      }, function () { window.prompt('請複製這個設定連結：', link); });
+    });
     $('sCards').addEventListener('input', renderCardCount);
     $('name').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('name').blur(); } });
     $('memo').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('memo').blur(); } });
@@ -1433,8 +1506,9 @@
   if (hashGas) {
     var g = decodeURIComponent(hashGas[1]);
     if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(g)) {
-      cfg.gasUrl = g; TL.saveCfg(cfg); devicesDirty = true;
+      cfg.gasUrl = g; TL.saveCfg(cfg);
       setTimeout(function () { toast('已設定雲端同步（Google 試算表）', 'ok', 5000); }, 500);
+      if (!cfg.cfgUpdated) hashJoin = true;
     }
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
   }
@@ -1445,14 +1519,17 @@
     $('btnSetupHere').addEventListener('click', function () { closeModal('mWelcome'); openAdmin('set'); });
   } else {
     startCam();
-    if (cfg.gasUrl) syncNow({ pull: true });
+    if (cfg.gasUrl && !hashJoin) syncNow({ pull: true });
   }
+  if (hashJoin) setTimeout(connectCloud, 300);
 
   // 測試用：在主控台 TLdebug.scan('iPad-01') 模擬掃描
   // fakeCamera(stream)：用 canvas.captureStream() 之類的影像代替鏡頭，測試解碼流程
   window.TLdebug = {
     scan: function (t) { onCode(t, 'manual'); },
     loans: function () { return loans; },
-    fakeCamera: function (s) { stopCam(false); startCam(s); }
+    fakeCamera: function (s) { stopCam(false); startCam(s); },
+    connect: function () { return connectCloud(); },
+    sync: function () { sync.lastPull = 0; return syncNow({ pull: true }); }
   };
 })();

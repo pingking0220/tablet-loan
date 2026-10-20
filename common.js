@@ -21,6 +21,7 @@
     tchDomain: 'lsps.tp.edu.tw',
     autoLogout: true,        // 借完自動登出 Google（共用的借還平板務必開啟）
     gasUrl: '',
+    cfgUpdated: 0,           // 共用設定最後修改時間（雲端以較新的為準）
     setupDone: false
   };
 

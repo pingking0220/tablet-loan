@@ -110,6 +110,7 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
         </div>
         <label class="f"><span>另外加印的編號（每行一個，可留白）</span><textarea id="extraIds" placeholder="例如：教師用-01"></textarea></label>
         <div class="hint">只要補印某幾台：起、迄填同一號即可（例：起 7、迄 7）。</div>
+        <div class="hint" id="cloudNote" style="margin-top:6px"></div>
       </fieldset>
 
       <fieldset>
@@ -176,7 +177,7 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
 
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/JsBarcode.all.min.js"></script>
-<script src="common.js?v=4"></script>
+<script src="common.js?v=5"></script>
 <script>
 (function () {
   'use strict';
@@ -419,6 +420,27 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
   $('printBtn').addEventListener('click', function () { window.print(); });
   window.addEventListener('resize', scalePreview);
   if (/[?&]mode=person/.test(location.search)) setMode('person'); else setMode('dev');
+
+  // 這台電腦有連雲端（用借還站的設定連結開過）：直接用雲端上的平板清單，避免和借還站對不上
+  function useCloud(st) {
+    var c = st.config || {};
+    $('prefix').value = c.prefix || ''; $('start').value = c.start; $('end').value = c.end; $('digits').value = c.digits;
+    $('extraIds').value = String(c.extra || '').split(/\r?\n/).map(function (l) { return l.split(/[,，\t]/)[0].trim(); }).filter(Boolean).join('\n');
+    if (mode === 'dev') $('title').value = ((c.school || cfg.school) + ' ' + st.station).trim();
+    $('cloudNote').innerHTML = '☁️ 已套用雲端上「<b>' + TL.esc(st.station) + '</b>」的平板清單，和借還站一致。';
+    render();
+  }
+  if (cfg.gasUrl) {
+    fetch(cfg.gasUrl + (cfg.gasUrl.indexOf('?') < 0 ? '?' : '&') + 'action=stations', { redirect: 'follow' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var list = (j && j.stations) || [];
+        var st = list.filter(function (s) { return s.station === cfg.station; })[0] || (list.length === 1 ? list[0] : null);
+        if (st) useCloud(st);
+      }).catch(function () {});
+  } else {
+    $('cloudNote').innerHTML = '⚠️ 這台電腦沒有連上雲端，請確認編號和借還站「管理 → 平板清單」一致。<br>在這台電腦開一次借還站的「設定連結」，以後就會自動帶入。';
+  }
 })();
 </script>
 </body>

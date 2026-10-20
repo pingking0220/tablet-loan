@@ -30,12 +30,14 @@ function doGet(e) {
   try {
     if (p.action === 'pull') {
       var res = pull_(String(p.station || ''), Number(p.since) || 0);
-      if (p.full && p.station) {
+      if ((p.full || p.cfg) && p.station) {
         var b = readBackup_(getSs_(), String(p.station));
         res.config = b.config; res.cards = b.cards;
       }
       return out_(res);
     }
+    // 新的借還平板加入時：列出雲端上已經設定好的平板車
+    if (p.action === 'stations') return out_({ ok: true, stations: listBackups_(getSs_()), time: Date.now() });
     var ss = getSs_();
     return out_({ ok: true, app: 'tablet-loan', sheet: ss.getName(), time: Date.now() });
   } catch (err) {
@@ -51,12 +53,14 @@ function doPost(e) {
     var ss = getSs_();
     var sh = logSheet_(ss);
     var saved = upsert_(sh, body.loans || []);
-    if (body.station && body.devices) {
+    // 設定以「最後修改時間」較新的為準：還沒設定好的新平板送來的舊設定不會蓋掉雲端
+    var cfgAccepted = true;
+    if (body.station && body.config) cfgAccepted = saveBackup_(ss, String(body.station), body.config, String(body.cards || ''));
+    if (body.station && body.devices && cfgAccepted) {
       PropertiesService.getScriptProperties().setProperty('devices:' + body.station, JSON.stringify(body.devices.slice(0, 500)));
     }
-    if (body.station && body.config) saveBackup_(ss, String(body.station), body.config, String(body.cards || ''));
     rebuildNow_(ss, sh);
-    return out_({ ok: true, saved: saved, time: Date.now() });
+    return out_({ ok: true, saved: saved, cfgAccepted: cfgAccepted, time: Date.now() });
   } catch (err) {
     return out_({ ok: false, error: String(err && err.message || err) });
   } finally {
@@ -169,9 +173,10 @@ function saveBackup_(ss, station, config, cardsText) {
     sh.getRange(1, 1, 1, 3).setValues([['平板車', '設定(JSON)', '更新時間']]).setFontWeight('bold');
     sh.setFrozenRows(1);
   }
-  var rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues() : [];
-  var at = -1;
-  rows.forEach(function (r, i) { if (String(r[0]) === station) at = i; });
+  var rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues() : [];
+  var at = -1, old = null;
+  rows.forEach(function (r, i) { if (String(r[0]) === station) { at = i; try { old = JSON.parse(r[1]); } catch (e) {} } });
+  if (old && Number(config.cfgUpdated || 0) < Number(old.cfgUpdated || 0)) return false;  // 雲端的比較新
   var row = [station, JSON.stringify(config), new Date()];
   if (at >= 0) sh.getRange(at + 2, 1, 1, 3).setValues([row]);
   else sh.getRange(sh.getLastRow() + 1, 1, 1, 3).setValues([row]);
@@ -192,6 +197,18 @@ function saveBackup_(ss, station, config, cardsText) {
   var all = keep.concat(mine);
   if (cs.getLastRow() > 1) cs.getRange(2, 1, cs.getLastRow() - 1, 5).clearContent();
   if (all.length) cs.getRange(2, 1, all.length, 5).setValues(all);
+  return true;
+}
+
+function listBackups_(ss) {
+  var sh = ss.getSheetByName(BAK), out = [];
+  if (!sh || sh.getLastRow() < 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
+    if (!r[0]) return;
+    var b = readBackup_(ss, String(r[0]));
+    if (b.config) out.push({ station: String(r[0]), config: b.config, cards: b.cards });
+  });
+  return out;
 }
 
 function readBackup_(ss, station) {

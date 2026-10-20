@@ -262,6 +262,12 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .btn.danger{background:#FFE4E4;color:#B4232A}
 .btn:active{transform:scale(.97)}
 .syncinfo{font-size:14.5px;line-height:1.8;margin-top:8px;color:var(--muted)}
+.setupwrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+.setupqr{width:200px;height:200px;flex-shrink:0;padding:8px;background:#fff;border-radius:16px;border:2px solid var(--line)}
+.setupqr svg{width:100%;height:100%;display:block}
+.setupwrap .note{flex:1;min-width:220px;font-size:14.5px}
+.stations .mb{display:flex;flex-direction:column;align-items:center;justify-content:center;height:auto;min-height:62px;padding:10px 14px}
+.stations .mb small{font-size:13px;font-weight:500;color:var(--muted)}
 .syncinfo b{color:var(--ink)}
 table.log{width:100%;border-collapse:collapse;font-size:14.5px;background:#fff;border-radius:16px;overflow:hidden}
 table.log th{text-align:left;font-size:13px;color:var(--soft);font-weight:700;padding:10px 10px;background:#F4F6FC;white-space:nowrap}
@@ -404,11 +410,23 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
       <div style="font-size:60px;line-height:1">📱</div>
       <h2 style="font-size:24px;font-weight:900;margin:10px 0 8px">平板借還站</h2>
       <p class="note" style="font-size:16px;line-height:1.8;margin-bottom:18px">這個網頁是給<b>平板車上的「借還平板」</b>用的。<br>老師、同學要借還平板，請到平板車上操作。</p>
+      <p class="note" style="font-size:14px;line-height:1.7;margin:-8px 0 16px">管理者：已經有其他借還平板設定好了嗎？到那台的「管理 → 雲端同步」，用這台的相機掃「設定 QR Code」就能直接加入。</p>
       <div class="mbtns">
         <a class="mb blue" href="guide.html" style="display:flex;align-items:center;justify-content:center;text-decoration:none">看怎麼借還平板</a>
         <button class="mb" id="btnSetupHere">我是管理者：把這台設定成借還平板</button>
         <a class="mb" href="https://pingking0220.github.io/" style="display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit">🏠 回行政服務首頁</a>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 選擇平板車（新平板加入時，雲端有多台車） -->
+<div class="modal" id="mStation" hidden>
+  <div class="sheet md">
+    <div class="sh"><h2>📲 這台要當哪一台平板車的借還站？</h2></div>
+    <div class="sb">
+      <div class="mbtns stations" id="stationList"></div>
+      <button class="mb" id="stationNew" style="margin-top:10px;width:100%">都不是，設定一台新的平板車</button>
     </div>
   </div>
 </div>
@@ -588,6 +606,16 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
           </div>
           <div class="syncinfo" id="syncInfo"></div>
         </div>
+        <div class="card" id="setupBox" hidden>
+          <h3>📲 新增或更換借還平板</h3>
+          <div class="setupwrap">
+            <div class="setupqr" id="setupQr"></div>
+            <div class="note">用新 iPad 的<b>「相機」</b>掃這個 QR Code，會用 Safari 開啟借還站並<b>自動套用這台平板車的所有設定</b>（平板清單、管理密碼、感應卡、身分驗證…）。<br><br>
+              之後任何一台改了設定，其他借還平板 5 分鐘內會自動跟著更新。<br><br>
+              ⚠️ 這個 QR Code 等於同步網址，請不要讓學生拍照。</div>
+          </div>
+          <div class="brow"><button class="btn" id="copySetup">複製設定連結</button></div>
+        </div>
       </div>
 
       <!-- 列印條碼 -->
@@ -609,7 +637,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
 
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/zxing-reader.js"></script>
-<script src="common.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="common.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
