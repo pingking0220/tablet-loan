@@ -1,7 +1,7 @@
 /* 平板借還站 — 離線快取：網路優先，斷線時用快取（學校網路斷了借還站照樣能開） */
-var CACHE = 'tablet-loan-v4';
+var CACHE = 'tablet-loan-v5';
 var SHELL = ['./', 'index.html', 'app.js', 'common.js', 'labels.html', 'guide.html', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png',
-  'vendor/html5-qrcode.min.js', 'vendor/qrcode.js', 'vendor/JsBarcode.all.min.js'];
+  'vendor/zxing-reader.js', 'vendor/zxing_reader.wasm', 'vendor/qrcode.js', 'vendor/JsBarcode.all.min.js'];
 
 self.addEventListener('install', function (e) {
   // cache:'reload' 跳過瀏覽器快取，確保離線備份是最新版

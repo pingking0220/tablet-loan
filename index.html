@@ -51,11 +51,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 /* 主畫面 */
 .kiosk{display:grid;grid-template-columns:1.12fr 1fr;gap:16px;padding:0 16px 16px;height:calc(100% - 64px)}
 .cam{position:relative;border-radius:28px;overflow:hidden;background:#0E1630;box-shadow:0 20px 50px rgba(14,22,48,.25);min-height:0}
-#reader{position:absolute !important;inset:0;width:auto !important;border:0 !important}
-#reader video{position:absolute;inset:0;width:100% !important;height:100% !important;object-fit:cover}
-#reader canvas,#reader img,#qr-shaded-region{display:none !important}
-.cam.mirror #reader video{transform:scaleX(-1)}
-.aim{position:absolute;left:50%;top:50%;width:min(62%,62vh);aspect-ratio:1;transform:translate(-50%,-55%);pointer-events:none}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#0E1630}
+.cam.mirror #video{transform:scaleX(-1)}
+.aim{position:absolute;left:50%;top:50%;width:min(62%,62vh);aspect-ratio:1;transform:translate(-50%,-50%);pointer-events:none}
 .aim i{position:absolute;width:44px;height:44px;border:6px solid rgba(255,255,255,.92);border-radius:6px}
 .aim i:nth-child(1){left:0;top:0;border-right:0;border-bottom:0;border-top-left-radius:22px}
 .aim i:nth-child(2){right:0;top:0;border-left:0;border-bottom:0;border-top-right-radius:22px}
@@ -145,6 +143,12 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .person .pr{color:var(--muted);font-size:15px}
 .person button{margin-left:auto;height:38px;padding:0 12px;border-radius:12px;background:#fff;font-weight:700;font-size:14px}
 .err{color:var(--red);font-size:15px;font-weight:700;min-height:22px;margin-top:10px}
+.unk{margin:14px 16px 0;padding:14px 16px;border-radius:18px;background:#FFF3E8;border:2px solid #FFC9A3;animation:pop .3s cubic-bezier(.3,1.6,.5,1)}
+.unk .uh{font-size:17px;font-weight:900;color:#B44A10;margin-bottom:6px}
+.unk .ub{font-size:15px;line-height:1.7;color:var(--ink);word-break:break-all}
+.unk .ua{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.unk .ua button{height:42px;padding:0 14px;border-radius:13px;background:#fff;font-weight:700;font-size:15px;border:2px solid #FFC9A3}
+.unk .ua button.pri{background:var(--orange);color:#fff;border-color:var(--orange)}
 .gbtn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;height:62px;border-radius:18px;background:#fff;border:2px solid #DADCE0;
   font-size:19px;font-weight:700;color:#3C4043;box-shadow:0 4px 12px rgba(43,43,58,.06)}
 .gbtn svg{width:26px;height:26px}
@@ -312,7 +316,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
 
 <main class="kiosk">
   <section class="cam" id="cam">
-    <div id="reader"></div>
+    <video id="video" playsinline muted autoplay></video>
     <div class="aim" aria-hidden="true"><i></i><i></i><i></i><i></i><div class="laser"></div></div>
     <div class="camhint" id="camhint">把平板背面的條碼對準鏡頭</div>
     <button class="flip" id="flipCam" aria-label="切換鏡頭">🔄</button>
@@ -333,6 +337,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
   </section>
 
   <section class="side">
+    <div class="unk" id="unk" hidden></div>
     <!-- 待機：說明＋最近紀錄 -->
     <div class="pane" id="pIdle">
       <div class="hello">
@@ -603,8 +608,8 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
 </div>
 
 <script src="vendor/qrcode.js"></script>
-<script src="vendor/html5-qrcode.min.js"></script>
-<script src="common.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="vendor/zxing-reader.js"></script>
+<script src="common.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

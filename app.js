@@ -179,10 +179,11 @@
         toast('這張卡還沒登錄，請找資訊組長在「管理 → 感應卡」登錄', 'bad', 5000);
         return;
       }
-      flash('err', '✕', '找不到這台平板', '條碼內容：' + text.slice(0, 40));
-      toast('「' + text.slice(0, 40) + '」不在平板清單裡，請通知資訊組長', 'bad', 5000);
+      flash('err', '✕', '找不到這台平板', '掃到：' + text.slice(0, 40), 2200);
+      showUnknown(text);
       return;
     }
+    hideUnknown();
 
     var open = openByDev[TL.norm(dev)];
     if (open) { doReturn(open); return; }
@@ -195,6 +196,36 @@
     beep('add');
     flash('add', '＋', dev, cart.length > 1 ? '已加入借用清單（共 ' + cart.length + ' 台）' : '請在右邊填寫借用人', 1300);
     showBorrow();
+  }
+
+  // 掃到的條碼不在平板清單：在右側面板留著說明（掃到什麼、清單是什麼），管理者可一鍵加入
+  var unkText = '', unkTimer = 0;
+  function showUnknown(text) {
+    var L = devs.list, range = L.length ? L[0].id + (L.length > 1 ? '～' + L[L.length - 1].id : '') : '（還沒有設定）';
+    unkText = text;
+    $('unk').innerHTML = '<div class="uh">⚠️ 掃到了，但平板清單裡沒有這台</div>' +
+      '<div class="ub">掃到的內容：<b>' + esc(text.slice(0, 60)) + '</b><br>目前平板清單：' + esc(range) + '（共 ' + L.length + ' 台）<br>' +
+      '<small>標籤上的編號要和「管理 → 平板清單」一樣（借還站和印標籤的電腦是各自設定的）。</small></div>' +
+      '<div class="ua"><button class="pri" id="unkAdd">把它加入平板清單</button><button id="unkClose">關閉</button></div>';
+    $('unk').hidden = false;
+    clearTimeout(unkTimer);
+    unkTimer = setTimeout(hideUnknown, 30000);
+  }
+  function hideUnknown() { clearTimeout(unkTimer); $('unk').hidden = true; unkText = ''; }
+  function addUnknown() {
+    var text = unkText.replace(/[,，\t\r\n]/g, ' ').trim();
+    if (!text) return;
+    askPin(function () {
+      cfg.extra = (String(cfg.extra || '').replace(/\s+$/, '') + '\n' + text).replace(/^\n/, '');
+      TL.saveCfg(cfg);
+      devs = TL.buildDevices(cfg);
+      devicesDirty = true; queueSync();
+      hideUnknown();
+      renderAll();
+      toast('已把「' + text + '」加入平板清單', 'ok');
+      lastScan = { code: '', at: 0 }; busyUntil = 0;
+      onCode(text, 'manual');
+    });
   }
 
   function doReturn(l) {
@@ -481,47 +512,122 @@
     $('clock').textContent = (d.getMonth() + 1) + '/' + d.getDate() + '（' + WK[d.getDay()] + '）' + hm(d.getTime());
   }
 
-  // ---------- 相機 ----------
-  var scanner = null, camOn = false, camStarting = false;
+  // ---------- 相機（自己開鏡頭，用 zxing-wasm 解碼） ----------
+  // 輪流掃「畫面中央（瞄準框，保留原解析度）」和「整張畫面（縮小）」：
+  // 中央裁切讓小標籤也夠清楚，整張畫面讓沒對準的也掃得到；每張只解一小塊，iPad 不會卡頓。
+  var stream = null, camOn = false, camStarting = false, scanTimer = 0, decoding = false, scanTick = 0;
+  var CROP = 0.62;            // 中央正方形佔畫面短邊的比例（和瞄準框一致）
+  var READ_OPTS = { formats: ['QRCode', 'Code128', 'Code39', 'EAN13'], tryHarder: true, maxNumberOfSymbols: 1 };
+  var grab = document.createElement('canvas'), grabCtx = grab.getContext('2d', { willReadFrequently: true });
+  var zxReady = null;
 
-  function camFormats() {
-    var F = window.Html5QrcodeSupportedFormats;
-    return F ? [F.QR_CODE, F.CODE_128, F.CODE_39, F.EAN_13] : undefined;
+  function prepareReader() {
+    if (zxReady) return zxReady;
+    if (!window.ZXingWASM) return Promise.reject(new Error('掃描元件載入失敗，請重新整理網頁。'));
+    zxReady = Promise.resolve(ZXingWASM.prepareZXingModule({
+      overrides: { locateFile: function (path, prefix) { return /\.wasm$/.test(path) ? 'vendor/' + path : prefix + path; } },
+      fireImmediately: true
+    })).catch(function (e) { zxReady = null; throw e; });
+    return zxReady;
   }
 
-  function startCam() {
+  function startCam(testStream) {
     if (camOn || camStarting) return;
-    if (!window.Html5Qrcode) { camError('掃描元件載入失敗，請重新整理網頁。'); return; }
-    camStarting = true;
     $('camSleep').hidden = true;
     $('camErr').hidden = true;
+    if (!testStream && !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      camError(window.isSecureContext ? '這個瀏覽器不能使用相機，請改用 Safari 或 Chrome。' : '相機只能在 https 網址使用。');
+      return;
+    }
+    camStarting = true;
+    prepareReader().catch(function (e) { camError((e && e.message) || '掃描元件載入失敗，請重新整理網頁。'); });
+    var get = testStream ? Promise.resolve(testStream) : navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: cfg.camera }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    get.then(function (s) {
+      stream = s;
+      var v = $('video');
+      v.muted = true; v.setAttribute('playsinline', ''); v.srcObject = s;
+      return v.play();
+    }).then(function () {
+      camOn = true; camStarting = false;
+      $('cam').classList.toggle('mirror', cfg.camera === 'user' && !testStream);
+      layoutAim();
+      focusContinuous();
+      wake();
+      scheduleScan(200);
+    }).catch(function (e) {
+      camStarting = false;
+      if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+      var m = String(e && (e.name || e.message) || e);
+      if (/NotAllowed|Permission/i.test(m)) camError('相機權限被拒絕。請到「設定 → Safari → 相機」改成「允許」，再按「再試一次」。');
+      else if (/NotFound|Overconstrained|NotReadable/i.test(m)) camError('找不到可用的鏡頭（或被其他 App 占用），請到管理 → 基本設定換一個鏡頭。');
+      else camError('錯誤訊息：' + m);
+    });
+  }
+
+  // 後鏡頭有自動對焦就打開連續對焦（前鏡頭多半是定焦，失敗就算了）
+  function focusContinuous() {
     try {
-      scanner = scanner || new Html5Qrcode('reader', { verbose: false, formatsToSupport: camFormats(), experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
-    } catch (e) { camStarting = false; camError(String(e && e.message || e)); return; }
-    var conf = {
-      fps: 12,
-      disableFlip: false,
-      videoConstraints: { facingMode: cfg.camera, width: { ideal: 1920 }, height: { ideal: 1080 } }
-    };
-    scanner.start({ facingMode: cfg.camera }, conf, function (txt) { onCode(txt, 'camera'); }, function () {})
-      .then(function () {
-        camOn = true; camStarting = false;
-        $('cam').classList.toggle('mirror', cfg.camera === 'user');
-        wake();
-      })
-      .catch(function (e) {
-        camStarting = false;
-        var m = String(e && (e.name || e.message) || e);
-        if (/NotAllowed|Permission/i.test(m)) camError('相機權限被拒絕。請到「設定 → Safari → 相機」改成「允許」，再按「再試一次」。');
-        else if (/NotFound|Overconstrained|no camera/i.test(m)) camError('找不到可用的鏡頭，請到管理 → 基本設定換一個鏡頭。');
-        else if (!window.isSecureContext) camError('相機只能在 https 網址使用。');
-        else camError('錯誤訊息：' + m);
-      });
+      var t = stream && stream.getVideoTracks()[0], caps = t && t.getCapabilities ? t.getCapabilities() : {};
+      if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+    } catch (e) {}
+  }
+
+  function scheduleScan(ms) {
+    clearTimeout(scanTimer);
+    if (camOn) scanTimer = setTimeout(scanFrame, ms || 80);
+  }
+
+  function scanFrame() {
+    var v = $('video');
+    if (!camOn) return;
+    if (decoding || !v.videoWidth || document.visibilityState !== 'visible') { scheduleScan(150); return; }
+    var vw = v.videoWidth, vh = v.videoHeight, sx, sy, sw, sh, ow, oh;
+    if (scanTick++ % 3 < 2) {
+      // 中央瞄準框：原解析度裁切，最多 800px
+      sw = sh = Math.round(Math.min(vw, vh) * CROP);
+      sx = (vw - sw) / 2; sy = (vh - sh) / 2;
+      ow = oh = Math.min(sw, 800);
+    } else {
+      // 整張畫面縮到寬 960
+      sx = 0; sy = 0; sw = vw; sh = vh;
+      ow = Math.min(vw, 960); oh = Math.round(vh * ow / vw);
+    }
+    grab.width = ow; grab.height = oh;
+    grabCtx.drawImage(v, sx, sy, sw, sh, 0, 0, ow, oh);
+    var img = grabCtx.getImageData(0, 0, ow, oh);
+    decoding = true;
+    prepareReader().then(function () {
+      return ZXingWASM.readBarcodes(img, READ_OPTS);
+    }).then(function (res) {
+      decoding = false;
+      var hit = (res || []).filter(function (r) { return r.isValid && r.text; })[0];
+      if (hit) onCode(hit.text, 'camera');
+      scheduleScan(hit ? 300 : 70);
+    }, function () {
+      decoding = false;
+      scheduleScan(500);
+    });
+  }
+
+  // 瞄準框對齊實際解碼的中央區域（影片是 object-fit: cover，要換算縮放）
+  function layoutAim() {
+    var v = $('video'), cam = $('cam'), aim = document.querySelector('.aim');
+    if (!v.videoWidth) return;
+    var cw = cam.clientWidth, ch = cam.clientHeight;
+    var scale = Math.max(cw / v.videoWidth, ch / v.videoHeight);
+    var size = Math.round(Math.min(v.videoWidth, v.videoHeight) * CROP * scale);
+    aim.style.width = aim.style.height = Math.min(size, cw - 24, ch - 24) + 'px';
   }
 
   function stopCam(sleep) {
-    var done = function () { camOn = false; };
-    if (scanner && camOn) { scanner.stop().then(done, done); } else done();
+    clearTimeout(scanTimer);
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = null; camOn = false; camStarting = false;
+    var v = $('video');
+    if (v) v.srcObject = null;
     if (sleep) $('camSleep').hidden = false;
   }
 
@@ -534,8 +640,8 @@
   function flipCam() {
     cfg.camera = cfg.camera === 'user' ? 'environment' : 'user';
     TL.saveCfg(cfg);
-    if (camOn && scanner) scanner.stop().then(function () { camOn = false; startCam(); }, function () { camOn = false; startCam(); });
-    else startCam();
+    stopCam(false);
+    startCam();
   }
 
   // 螢幕保持常亮（Safari 16.4 以上支援）
@@ -687,7 +793,14 @@
   function openModal(id) { $(id).hidden = false; activity(); }
   function closeModal(id) {
     $(id).hidden = true;
-    if (id === 'mAdmin') regStop();
+    if (id !== 'mAdmin') return;
+    regStop();
+    // 第一次設定時沒按「儲存設定」就關掉：一樣當作設定完成，直接開始借還（不然每次開都卡在歡迎畫面）
+    if (!cfg.setupDone) {
+      cfg.setupDone = true;
+      TL.saveCfg(cfg);
+      startCam();
+    }
   }
   function anyModalOpen() { return [].some.call(document.querySelectorAll('.modal'), function (m) { return !m.hidden; }); }
 
@@ -1212,6 +1325,10 @@
       if (!cart.length) resetBorrow(true);
     });
     $('btnCancel').addEventListener('click', function () { resetBorrow(true); });
+    $('unk').addEventListener('click', function (e) {
+      if (e.target.id === 'unkAdd') addUnknown();
+      if (e.target.id === 'unkClose') hideUnknown();
+    });
     $('btnGoogle').addEventListener('click', googleSignIn);
     $('btnConfirm').addEventListener('click', confirmBorrow);
 
@@ -1289,6 +1406,8 @@
       else { wake(); renderAll(); queueSync(); if (cfg.setupDone) startCam(); }
     });
     window.addEventListener('online', function () { queueSync(); });
+    window.addEventListener('resize', layoutAim);
+    $('video').addEventListener('loadedmetadata', layoutAim);
     window.addEventListener('storage', function (e) {
       if (e.key === TL.KEY_CFG) { cfg = TL.loadCfg(); devs = TL.buildDevices(cfg); cards = TL.buildCards(cfg.cards); renderAll(); }
     });
@@ -1330,5 +1449,10 @@
   }
 
   // 測試用：在主控台 TLdebug.scan('iPad-01') 模擬掃描
-  window.TLdebug = { scan: function (t) { onCode(t, 'manual'); }, loans: function () { return loans; } };
+  // fakeCamera(stream)：用 canvas.captureStream() 之類的影像代替鏡頭，測試解碼流程
+  window.TLdebug = {
+    scan: function (t) { onCode(t, 'manual'); },
+    loans: function () { return loans; },
+    fakeCamera: function (s) { stopCam(false); startCam(s); }
+  };
 })();
