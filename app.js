@@ -4,12 +4,11 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var esc = TL.esc;
-  var KEY_LOANS = 'tl.loans', KEY_DIRTY = 'tl.dirty', KEY_META = 'tl.meta';
+  var KEY_PENDING = 'tl.pending';
   var DAY = 864e5;
 
   var cfg = TL.loadCfg();
   var devs = TL.buildDevices(cfg);
-  var cards = TL.buildCards(cfg.cards);
 
   // 借用人 Google 登入：沿用場地預約同一個 Firebase 專案（已授權 pingking0220.github.io 網域）
   var FIREBASE_CONFIG = {
@@ -20,23 +19,17 @@
   };
   var loans = [], byId = {}, openByDev = {};
   var dirty = {};
-  var meta = { pullSince: 0 };
+  var srv = { loaded: false, stations: [], pinLen: 4 };
 
-  // ---------- 儲存 ----------
+  // ---------- 儲存（雲端版：平板只暫存「網路斷線時還沒送出的借還動作」，其他都從雲端讀） ----------
   function load() {
-    try { loans = JSON.parse(TL.lsGet(KEY_LOANS) || '[]') || []; } catch (e) { loans = []; }
-    try { (JSON.parse(TL.lsGet(KEY_DIRTY) || '[]') || []).forEach(function (id) { dirty[id] = 1; }); } catch (e) {}
-    try { meta = JSON.parse(TL.lsGet(KEY_META) || '{}') || {}; } catch (e) { meta = {}; }
-    meta.pullSince = meta.pullSince || 0;
-    prune();
+    var pend = [];
+    try { pend = JSON.parse(TL.lsGet(KEY_PENDING) || '[]') || []; } catch (e) { pend = []; }
+    // 舊版把所有紀錄存在平板上，雲端版不再使用
+    ['tl.loans', 'tl.dirty', 'tl.meta'].forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
+    loans = pend.filter(function (l) { return l && l.id; });
+    loans.forEach(function (l) { dirty[l.id] = 1; });
     reindex();
-  }
-
-  // 本機只留近 400 天且已上傳的已結案紀錄，避免塞爆瀏覽器空間（雲端仍有完整紀錄）
-  function prune() {
-    if (loans.length < 6000) return;
-    var cut = Date.now() - 400 * DAY;
-    loans = loans.filter(function (l) { return !(l.inAt || l.void) || dirty[l.id] || l.outAt > cut; });
   }
 
   function reindex() {
@@ -48,10 +41,7 @@
   }
 
   function persist() {
-    var ok = TL.lsSet(KEY_LOANS, JSON.stringify(loans)) &&
-      TL.lsSet(KEY_DIRTY, JSON.stringify(Object.keys(dirty))) &&
-      TL.lsSet(KEY_META, JSON.stringify(meta));
-    if (!ok) toast('⚠️ 無法儲存紀錄（瀏覽器空間不足或在無痕模式），請通知資訊組長', 'bad', 8000);
+    TL.lsSet(KEY_PENDING, JSON.stringify(loans.filter(function (l) { return dirty[l.id]; })));
   }
 
   function touch(l) { l.updated = Date.now(); dirty[l.id] = 1; }
@@ -167,22 +157,11 @@
     if (regWaiting) { regGot(text); return; }
     if (anyModalOpen()) return;
 
-    var p = TL.parsePerson(text) || cards.map[key];
+    var p = TL.parsePerson(text);
     if (p) { setPerson(p); return; }
 
     var dev = devs.map[key];
-    if (!dev) {
-      beep('err');
-      // 讀卡機打進來、像卡號的（純數字或十六進位）→ 多半是還沒登錄的卡
-      if (source === 'keyboard' && /^[0-9A-F]{6,}$/.test(key)) {
-        flash('err', '📶', '這張卡還沒登錄', '卡號：' + text.slice(0, 30));
-        toast('這張卡還沒登錄，請找資訊組長在「管理 → 感應卡」登錄', 'bad', 5000);
-        return;
-      }
-      flash('err', '✕', '找不到這台平板', '掃到：' + text.slice(0, 40), 2200);
-      showUnknown(text);
-      return;
-    }
+    if (!dev) { lookupCard(text, source); return; }
     hideUnknown();
 
     var open = openByDev[TL.norm(dev)];
@@ -198,6 +177,33 @@
     showBorrow();
   }
 
+  // 不是平板：問雲端是不是登錄過的感應卡（名單只在雲端，不放在平板上）
+  var cardCache = {};
+  function lookupCard(text, source) {
+    var key = TL.norm(text), cardLike = source === 'keyboard' && /^[0-9A-F]{4,}$/.test(key);
+    var done = function (c) {
+      if (c && c.found) {
+        cardCache[key] = c;
+        setPerson({ name: c.name, role: c.role, cls: c.cls, card: text });
+        return;
+      }
+      beep('err');
+      if (cardLike) {
+        flash('err', '📶', '這張卡還沒登錄', '卡號：' + text.slice(0, 30));
+        toast('這張卡還沒登錄，請找資訊組長在「管理 → 感應卡」登錄', 'bad', 5000);
+      } else {
+        flash('err', '✕', '找不到這台平板', '掃到：' + text.slice(0, 40), 2200);
+        showUnknown(text);
+      }
+    };
+    if (cardCache[key]) { done(cardCache[key]); return; }
+    if (cardLike) flash('done', '📶', '查詢感應卡…', '', 900);
+    gasGet({ action: 'card', station: cfg.station, uid: text }).then(done, function () {
+      if (cardLike) { beep('err'); flash('err', '📶', '連不上雲端', '網路恢復後再刷一次', 2200); }
+      else done(null);
+    });
+  }
+
   // 掃到的條碼不在平板清單：在右側面板留著說明（掃到什麼、清單是什麼），管理者可一鍵加入
   var unkText = '', unkTimer = 0;
   function showUnknown(text) {
@@ -205,7 +211,7 @@
     unkText = text;
     $('unk').innerHTML = '<div class="uh">⚠️ 掃到了，但平板清單裡沒有這台</div>' +
       '<div class="ub">掃到的內容：<b>' + esc(text.slice(0, 60)) + '</b><br>目前平板清單：' + esc(range) + '（共 ' + L.length + ' 台）<br>' +
-      '<small>標籤上的編號要和「管理 → 平板清單」一樣（借還站和印標籤的電腦是各自設定的）。</small></div>' +
+      '<small>標籤上的編號要和「管理 → 平板清單」一樣。</small></div>' +
       '<div class="ua"><button class="pri" id="unkAdd">把它加入平板清單</button><button id="unkClose">關閉</button></div>';
     $('unk').hidden = false;
     clearTimeout(unkTimer);
@@ -217,14 +223,14 @@
     if (!text) return;
     askPin(function () {
       cfg.extra = (String(cfg.extra || '').replace(/\s+$/, '') + '\n' + text).replace(/^\n/, '');
-      TL.saveCfg(cfg);
       devs = TL.buildDevices(cfg);
-      markCfgChanged();
       hideUnknown();
-      renderAll();
-      toast('已把「' + text + '」加入平板清單', 'ok');
-      lastScan = { code: '', at: 0 }; busyUntil = 0;
-      onCode(text, 'manual');
+      saveCloud().then(function (ok) {
+        if (!ok) return;
+        toast('已把「' + text + '」加入平板清單', 'ok');
+        lastScan = { code: '', at: 0 }; busyUntil = 0;
+        onCode(text, 'manual');
+      });
     });
   }
 
@@ -318,15 +324,9 @@
   }
 
   // 最近 60 天借過的老師／其他人，點一下就帶入姓名
+  // 雲端版只拿得到遮蔽過的姓名，不再提供「最近借用人」快速按鈕
   function renderNames() {
-    if (role === '學生') { $('names').innerHTML = ''; return; }
-    var seen = {}, out = [], since = Date.now() - 60 * DAY;
-    for (var i = loans.length - 1; i >= 0 && out.length < 10; i--) {
-      var l = loans[i];
-      if (l.void || !l.name || l.role !== role || l.outAt < since || seen[l.name]) continue;
-      seen[l.name] = 1; out.push(l.name);
-    }
-    $('names').innerHTML = out.map(function (n) { return '<button data-n="' + esc(n) + '">' + esc(n) + '</button>'; }).join('');
+    $('names').innerHTML = '';
   }
 
   function setPerson(p) {
@@ -436,7 +436,7 @@
     if (!cart.length) return;
     var b = { name: '', role: role, cls: '', email: '' };
     if (person) {
-      b = { name: person.name, role: person.role || '其他', cls: person.cls || '', email: person.email || '' };
+      b = { name: person.name, role: person.role || '其他', cls: person.cls || '', email: person.email || '', card: person.card || '' };
     } else if (cfg.auth === 'google') {
       return bErr('請先按「用' + (role === '學生' ? '學生' : '老師') + ' Google 帳號登入」');
     } else if (role === '學生') {
@@ -453,6 +453,7 @@
     cart.forEach(function (dev) {
       if (openByDev[TL.norm(dev)]) return;  // 保險：同時被別台借走就跳過
       var l = { id: uid(), device: dev, name: b.name, email: b.email, role: b.role, cls: b.cls, memo: memo, outAt: now, inAt: null, void: false, batch: batch, station: cfg.station };
+      if (b.card) l.card = b.card;
       touch(l);
       loans.push(l);
       made.push(dev);
@@ -753,40 +754,51 @@
     });
   }
 
-  // ---------- 密碼 ----------
-  var pinBuf = '', pinCb = null;
+  // ---------- 管理密碼（由雲端驗證，平板不存密碼） ----------
+  var pinBuf = '', pinCb = null, pinBusy = false;
+  var admin = { token: '', exp: 0, okUntil: 0 };
+  function adminToken() { return admin.token && admin.exp > Date.now() + 60e3 ? admin.token : ''; }
   function askPin(cb) {
-    if (pinOkUntil > Date.now()) { pinOkUntil = Date.now() + 5 * 60e3; cb(); return; }
-    pinBuf = ''; pinCb = cb;
+    if (admin.okUntil > Date.now() && adminToken()) { admin.okUntil = Date.now() + 5 * 60e3; cb(); return; }
+    pinBuf = ''; pinCb = cb; pinBusy = false;
     $('pinMsg').textContent = '';
     renderPin();
     openModal('mPin');
   }
-  var pinOkUntil = 0;
   function renderPin() {
-    var n = Math.max(4, String(cfg.pin).length), h = '';
+    var n = Math.max(4, srv.pinLen || 4), h = '';
     for (var i = 0; i < n; i++) h += '<i class="' + (i < pinBuf.length ? 'f' : '') + '"></i>';
     $('pinDots').innerHTML = h;
   }
   function pinPress(k) {
     activity();
+    if (pinBusy) return;
     if (k === '⌫') pinBuf = pinBuf.slice(0, -1);
     else if (k === 'C') pinBuf = '';
     else if (pinBuf.length < 6) pinBuf += k;
     renderPin();
-    if (pinBuf.length >= String(cfg.pin).length) {
-      if (pinBuf === String(cfg.pin)) {
-        pinOkUntil = Date.now() + 5 * 60e3;  // 5 分鐘內不用再輸入
-        closeModal('mPin');
-        var cb = pinCb; pinCb = null;
-        if (cb) cb();
-      } else {
-        var d = $('pinDots'); d.classList.remove('shake'); void d.offsetWidth; d.classList.add('shake');
-        $('pinMsg').textContent = '密碼不對，再試一次';
-        pinBuf = '';
-        setTimeout(renderPin, 400);
-      }
-    }
+    if (pinBuf.length < Math.max(4, srv.pinLen || 4)) return;
+    pinBusy = true;
+    $('pinMsg').textContent = '確認中…';
+    gasPost({ action: 'login', pin: pinBuf }).then(function (j) {
+      pinBusy = false;
+      admin.token = j.token; admin.exp = j.exp || Date.now() + 12 * 3600e3;
+      admin.okUntil = Date.now() + 5 * 60e3;  // 5 分鐘內不用再輸入
+      closeModal('mPin');
+      var cb = pinCb; pinCb = null;
+      if (cb) cb();
+    }, function (e) {
+      pinBusy = false;
+      var d = $('pinDots'); d.classList.remove('shake'); void d.offsetWidth; d.classList.add('shake');
+      $('pinMsg').textContent = (e && e.message) === '密碼不對' ? '密碼不對，再試一次' : (e && e.message) || '需要網路才能進入管理';
+      pinBuf = '';
+      setTimeout(renderPin, 400);
+    });
+  }
+  // 通行證過期：清掉，下次動作再問密碼
+  function authFail(e) {
+    if (e && e.auth === false) { admin.token = ''; admin.okUntil = 0; toast('請重新輸入管理密碼', 'bad'); return true; }
+    return false;
   }
 
   // ---------- 彈出視窗 ----------
@@ -795,12 +807,8 @@
     $(id).hidden = true;
     if (id !== 'mAdmin') return;
     regStop();
-    // 第一次設定時沒按「儲存設定」就關掉：一樣當作設定完成，直接開始借還（不然每次開都卡在歡迎畫面）
-    if (!cfg.setupDone) {
-      cfg.setupDone = true;
-      TL.saveCfg(cfg);
-      startCam();
-    }
+    // 還沒有平板車（第一次建立時沒存就關掉）：回到歡迎畫面
+    if (!cfg.setupDone) showWelcome(srv.stations.length ? 'pick' : 'none');
   }
   function anyModalOpen() { return [].some.call(document.querySelectorAll('.modal'), function (m) { return !m.hidden; }); }
 
@@ -878,7 +886,7 @@
     regStop();
     regUid = uidText.trim();
     beep('add');
-    var key = TL.norm(regUid), c = cards.map[key], d = devs.map[key];
+    var key = TL.norm(regUid), c = TL.buildCards(adminCards).map[key], d = devs.map[key];
     $('regUid').textContent = regUid;
     $('regWho').textContent = c ? '（目前登錄給 ' + c.name + '）' : d ? '（目前綁定 ' + d + '）' : '（新卡片）';
     regKind = d && !c ? 'd' : 'p';
@@ -909,7 +917,7 @@
   function regSave() {
     var key = TL.norm(regUid);
     if (!key) return;
-    var cardsText = withoutUid(cfg.cards, key, false), extra = withoutUid(cfg.extra, key, true);
+    var cardsText = withoutUid(adminCards, key, false), extra = withoutUid(cfg.extra, key, true);
     if (regKind === 'p') {
       var name = $('regName').value.trim().replace(/[,，]/g, ' ');
       if (!name) { toast('請填寫姓名', 'bad'); return; }
@@ -922,24 +930,41 @@
       }).join('\n');
       if (!found) extra = (extra.trim() ? extra.replace(/\s+$/, '') + '\n' : '') + dev + ',' + regUid;
     }
-    cfg.cards = cardsText; cfg.extra = extra;
-    TL.saveCfg(cfg);
-    cards = TL.buildCards(cfg.cards); devs = TL.buildDevices(cfg);
-    markCfgChanged();
-    $('sCards').value = cfg.cards; $('sExtra').value = cfg.extra;
-    renderCardCount();
+    var label = regKind === 'p' ? '已登錄：' + $('regName').value.trim() : '已綁定到 ' + $('regDev').value;
+    cfg.extra = extra; devs = TL.buildDevices(cfg);
     $('regForm').hidden = true;
-    toast(regKind === 'p' ? '已登錄：' + $('regName').value.trim() : '已綁定到 ' + $('regDev').value, 'ok');
-    regStart();  // 接著登錄下一張
+    cardCache = {};
+    saveCloud({ cards: cardsText }).then(function (ok) {
+      if (!ok) return;
+      adminCards = cardsText;
+      $('sCards').value = adminCards; $('sExtra').value = cfg.extra;
+      renderCardCount();
+      toast(label, 'ok');
+      regStart();  // 接著登錄下一張
+    });
   }
   function renderCardCount() { $('cardCount').textContent = TL.buildCards($('sCards').value).count; }
+  var adminCards = '';
+  function loadCards() {
+    $('sCards').value = '載入中…'; $('sCards').disabled = true;
+    gasGet({ action: 'cards', station: cfg.station, token: adminToken() }).then(function (j) {
+      adminCards = j.cards || '';
+      $('sCards').value = adminCards; $('sCards').disabled = false;
+      renderCardCount();
+    }, function (e) {
+      authFail(e);
+      $('sCards').value = ''; $('sCards').disabled = false;
+      toast('讀不到感應卡名單：' + ((e && e.message) || e), 'bad', 5000);
+    });
+  }
   function saveCards() {
-    cfg.cards = $('sCards').value;
-    TL.saveCfg(cfg);
-    cards = TL.buildCards(cfg.cards);
-    markCfgChanged();
-    renderCardCount();
-    toast('借用人卡名單已儲存，共 ' + cards.count + ' 張', 'ok');
+    var text = $('sCards').value;
+    cardCache = {};
+    saveCloud({ cards: text }).then(function (ok) {
+      if (!ok) return;
+      adminCards = text;
+      toast('借用人卡名單已存到雲端，共 ' + TL.buildCards(text).count + ' 張', 'ok');
+    });
   }
 
   // ---------- 管理 ----------
@@ -955,20 +980,19 @@
     adminTab = t;
     [].forEach.call($('atabs').children, function (b) { b.classList.toggle('on', b.dataset.t === t); });
     [].forEach.call(document.querySelectorAll('#mAdmin [data-p]'), function (p) { p.hidden = p.dataset.p !== t; });
-    if (t === 'log') renderLog();
+    if (t === 'log') loadLog();
     if (t === 'cloud') renderSyncInfo();
     if (t === 'dev') renderDevPreview();
-    if (t === 'card') { $('sCards').value = cfg.cards; renderCardCount(); } else { regStop(); $('regForm').hidden = true; }
+    if (t === 'card') loadCards(); else { regStop(); $('regForm').hidden = true; }
   }
 
   function fillSettings() {
     $('sPrefix').value = cfg.prefix; $('sStart').value = cfg.start; $('sEnd').value = cfg.end; $('sDigits').value = cfg.digits;
     $('sExtra').value = cfg.extra;
     $('sSchool').value = cfg.school; $('sStation').value = cfg.station; $('sCamera').value = cfg.camera;
-    $('sClasses').value = cfg.classes; $('sPin').value = cfg.pin;
+    $('sClasses').value = cfg.classes; $('sPin').value = '';
     $('sAuth').value = cfg.auth; $('sStuDomain').value = cfg.stuDomain; $('sTchDomain').value = cfg.tchDomain; $('sAutoLogout').checked = !!cfg.autoLogout;
     $('sGas').value = cfg.gasUrl;
-    $('sCards').value = cfg.cards;
     $('welcome').hidden = !!cfg.setupDone;
   }
 
@@ -993,39 +1017,42 @@
     var orphan = loans.filter(function (l) { return !l.inAt && !l.void && !map[TL.norm(l.device)]; });
     if (orphan.length && !confirm(orphan.map(function (l) { return l.device; }).join('、') + ' 還沒歸還但不在新清單裡，確定要儲存嗎？')) return;
     cfg.prefix = d.prefix; cfg.start = parseInt(d.start, 10) || 0; cfg.end = parseInt(d.end, 10) || 0; cfg.digits = parseInt(d.digits, 10) || 0; cfg.extra = d.extra;
-    TL.saveCfg(cfg);
     devs = TL.buildDevices(cfg);
-    markCfgChanged();
-    renderAll();
-    toast('平板清單已儲存，共 ' + list.length + ' 台', 'ok');
+    saveCloud().then(function (ok) { if (ok) toast('平板清單已存到雲端，共 ' + list.length + ' 台', 'ok'); });
   }
 
   function saveSet() {
     var pin = $('sPin').value.trim();
-    if (!/^\d{4,6}$/.test(pin)) { toast('管理密碼請用 4～6 位數字', 'bad'); return; }
+    if (pin && !/^\d{4,6}$/.test(pin)) { toast('管理密碼請用 4～6 位數字', 'bad'); return; }
     var station = $('sStation').value.trim();
     if (!station) { toast('請填寫平板車名稱', 'bad'); return; }
-    var renamed = cfg.station !== station;
-    cfg.school = $('sSchool').value.trim(); cfg.station = station; cfg.pin = pin;
+    var from = cfg.setupDone && cfg.station !== station ? cfg.station : '';
+    if (from && !confirm('把平板車「' + from + '」改名成「' + station + '」？借用紀錄會一起改名。')) return;
+    cfg.school = $('sSchool').value.trim(); cfg.station = station;
     cfg.classes = Math.max(1, Math.min(20, parseInt($('sClasses').value, 10) || 8));
     cfg.auth = $('sAuth').value;
     cfg.stuDomain = $('sStuDomain').value.trim().replace(/^@/, '').toLowerCase() || TL.DEFAULT_CFG.stuDomain;
     cfg.tchDomain = $('sTchDomain').value.trim().replace(/^@/, '').toLowerCase() || TL.DEFAULT_CFG.tchDomain;
     cfg.autoLogout = $('sAutoLogout').checked;
     if (cfg.auth === 'google') loadFirebase().catch(function () {});
+    // 鏡頭是每台平板自己的設定
     var cam = $('sCamera').value, camChanged = cam !== cfg.camera;
     cfg.camera = cam;
-    var first = !cfg.setupDone;
-    cfg.setupDone = true;
     TL.saveCfg(cfg);
-    if (renamed) { meta.pullSince = 0; persist(); }
-    markCfgChanged();
-    $('welcome').hidden = true;
-    renderAll();
-    renderRole();
     if (camChanged && camOn) flipCamTo(cam);
-    toast(first ? '設定完成，可以開始借還了！' : '設定已儲存', 'ok');
-    if (first) { closeModal('mAdmin'); startCam(); }
+    var first = !cfg.setupDone;
+    var pinStep = pin ? gasPost({ action: 'setpin', token: adminToken(), pin: pin }).then(function () { srv.pinLen = pin.length; return true; }, function (e) {
+      authFail(e); toast('密碼沒有改成功：' + ((e && e.message) || e), 'bad', 6000); return false;
+    }) : Promise.resolve(true);
+    pinStep.then(function () { return saveCloud({ renamedFrom: from }); }).then(function (ok) {
+      if (!ok) return;
+      setCartParam(cfg.station);
+      $('sPin').value = '';
+      $('welcome').hidden = true;
+      renderRole();
+      toast(first ? '平板車建立完成，可以開始借還了！' : '設定已存到雲端，其他借還平板會自動更新', 'ok', 5000);
+      if (first) { closeModal('mAdmin'); startCam(); }
+    });
   }
 
   function flipCamTo(cam) {
@@ -1033,17 +1060,23 @@
     flipCam();
   }
 
-  function wipe() {
-    if (!confirm('確定要清除這台借還平板上的所有借用紀錄嗎？（雲端試算表的紀錄不會被刪除）')) return;
-    if (!confirm('再確認一次：清除後無法復原。')) return;
-    loans = []; dirty = {}; meta.pullSince = 0;
-    changed();
-    toast('已清除本機紀錄', 'ok');
+  // 借用紀錄（完整姓名、帳號）只在管理頁向雲端要，不存在平板上
+  var adminLog = [], logLoading = false;
+  function loadLog() {
+    logLoading = true; renderLog();
+    gasGet({ action: 'log', station: cfg.station, days: logRange ? logRange + 1 : 0, token: adminToken() }).then(function (j) {
+      adminLog = (j.loans || []).map(normLoan);
+      logLoading = false; renderLog();
+    }, function (e) {
+      logLoading = false;
+      authFail(e);
+      $('logSum').textContent = '讀不到雲端紀錄：' + ((e && e.message) || e);
+    });
   }
 
   function logRows() {
     var q = TL.norm($('logQ').value), since = logRange ? sod(Date.now()) - (logRange - 1) * DAY : 0;
-    return loans.filter(function (l) {
+    return adminLog.filter(function (l) {
       if (logRange && l.outAt < since && (!l.inAt || l.inAt < since) && (l.inAt || l.void)) return false;
       if (q && TL.norm([l.device, l.name, l.cls, l.memo, l.role].join(' ')).indexOf(q) < 0) return false;
       return true;
@@ -1052,6 +1085,7 @@
 
   function renderLog() {
     if (adminTab !== 'log') return;
+    if (logLoading) { $('logSum').textContent = '從雲端讀取中…'; $('logTable').innerHTML = ''; return; }
     var rows = logRows();
     var out = rows.filter(function (l) { return !l.inAt && !l.void; }).length;
     $('logSum').textContent = '共 ' + rows.length + ' 筆' + (out ? '，其中 ' + out + ' 筆還沒歸還' : '') + (logRange ? '（含期間內仍借出中的）' : '');
@@ -1085,95 +1119,102 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
   }
 
-  // ---------- 雲端同步（Google Apps Script） ----------
-  var sync = { busy: false, again: false, lastOk: 0, lastErr: '', lastPull: 0 };
-  var devicesDirty = !!cfg.cfgUpdated, syncTimer = 0, hashJoin = false;
+  // ---------- 雲端（Google Apps Script，所有資料都在這裡） ----------
+  var sync = { busy: false, again: false, lastOk: 0, lastErr: '' };
+  var syncTimer = 0;
+  var SHARED_KEYS = ['school', 'prefix', 'start', 'end', 'digits', 'extra', 'classes', 'auth', 'stuDomain', 'tchDomain', 'autoLogout'];
+
+  function api() { return cfg.gasUrl || TL.API; }
 
   function queueSync() {
-    if (!cfg.gasUrl) return;
     clearTimeout(syncTimer);
-    syncTimer = setTimeout(function () { syncNow(); }, 800);
+    syncTimer = setTimeout(function () { syncNow(); }, 500);
   }
 
   function withTimeout(p, ms) {
     return Promise.race([p, new Promise(function (_, rej) { setTimeout(function () { rej(new Error('連線逾時')); }, ms); })]);
   }
-
+  function check(j) {
+    if (!j || !j.ok) { var e = new Error((j && j.error) || '伺服器回應錯誤'); if (j && j.auth === false) e.auth = false; throw e; }
+    return j;
+  }
   function gasPost(payload) {
     // text/plain 不會觸發 CORS 預檢，Apps Script 才收得到
-    return withTimeout(fetch(cfg.gasUrl, { method: 'POST', body: JSON.stringify(payload), redirect: 'follow' }), 25000)
-      .then(function (r) { return r.json(); })
-      .then(function (j) { if (!j || !j.ok) throw new Error((j && j.error) || '伺服器回應錯誤'); return j; });
+    return withTimeout(fetch(api(), { method: 'POST', body: JSON.stringify(payload), redirect: 'follow' }), 25000)
+      .then(function (r) { return r.json(); }).then(check);
   }
   function gasGet(params) {
     var qs = Object.keys(params).map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
-    return withTimeout(fetch(cfg.gasUrl + (cfg.gasUrl.indexOf('?') < 0 ? '?' : '&') + qs, { redirect: 'follow' }), 25000)
-      .then(function (r) { return r.json(); })
-      .then(function (j) { if (!j || !j.ok) throw new Error((j && j.error) || '伺服器回應錯誤'); return j; });
+    var u = api();
+    return withTimeout(fetch(u + (u.indexOf('?') < 0 ? '?' : '&') + qs, { redirect: 'follow' }), 25000)
+      .then(function (r) { return r.json(); }).then(check);
   }
 
-  function merge(list) {
-    var n = 0;
-    (list || []).forEach(function (r) {
-      if (!r || !r.id) return;
-      var l = {
-        id: String(r.id), device: String(r.device || ''), name: String(r.name || ''), email: String(r.email || ''), role: String(r.role || ''), cls: String(r.cls || ''),
-        memo: String(r.memo || ''), outAt: +r.outAt || 0, inAt: +r.inAt || null, void: !!r.void, batch: String(r.batch || ''),
-        station: String(r.station || ''), updated: +r.updated || 0
-      };
-      var cur = byId[l.id];
-      if (!cur) { loans.push(l); byId[l.id] = l; n++; }
-      else if (l.updated > cur.updated) {
-        for (var k in l) cur[k] = l[k];
-        delete dirty[l.id];
-        n++;
-      }
-    });
-    if (n) loans.sort(function (a, b) { return a.outAt - b.outAt; });
-    return n;
+  function normLoan(r) {
+    return {
+      id: String(r.id), device: String(r.device || ''), name: String(r.name || ''), email: String(r.email || ''), role: String(r.role || ''), cls: String(r.cls || ''),
+      memo: String(r.memo || ''), outAt: +r.outAt || 0, inAt: +r.inAt || null, void: !!r.void, batch: String(r.batch || ''),
+      station: String(r.station || ''), updated: +r.updated || 0
+    };
   }
 
+  // 網址的 ?cart= 指定這台是哪一台平板車（加到書籤或 Jamf 網頁捷徑就固定了）
+  function cartParam() { var m = /[?&]cart=([^&#]+)/.exec(location.search); return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : ''; }
+  function setCartParam(name) {
+    try {
+      var q = location.search.replace(/[?&]cart=[^&#]*/g, '').replace(/^&/, '?');
+      q = (q && q !== '?' ? q + '&' : '?') + 'cart=' + encodeURIComponent(name);
+      history.replaceState(null, '', location.pathname + q + location.hash);
+    } catch (e) {}
+  }
+  function wantStation() { return cartParam() || cfg.station || ''; }
+
+  // 套用雲端回傳的狀態：設定、借出中與最近幾天的紀錄（姓名已遮蔽）
+  function applyState(j) {
+    srv.loaded = true; srv.stations = j.stations || []; srv.pinLen = j.pinLen || 4;
+    if (!j.station) { cfg.setupDone = false; TL.saveCfg(cfg); showWelcome(srv.stations.length ? 'pick' : 'none'); return; }
+    var first = !cfg.setupDone || cfg.station !== j.station;
+    cfg.station = j.station;
+    var c = j.config || {};
+    SHARED_KEYS.forEach(function (k) { if (c[k] !== undefined) cfg[k] = c[k]; });
+    cfg.cfgUpdated = c.cfgUpdated || 0;
+    cfg.setupDone = true;
+    TL.saveCfg(cfg);  // 只當快取：斷線時也能先開起來
+    devs = TL.buildDevices(cfg);
+    var mine = loans.filter(function (l) { return dirty[l.id]; }), mineIds = {};
+    mine.forEach(function (l) { mineIds[l.id] = 1; });
+    loans = (j.loans || []).filter(function (r) { return !mineIds[r.id]; }).map(normLoan).concat(mine)
+      .sort(function (a, b) { return a.outAt - b.outAt; });
+    reindex();
+    if (!cart.length && !person) renderRole();
+    if (first) {
+      ['mWelcome', 'mStation'].forEach(function (id) { $(id).hidden = true; });
+      if (!cartParam()) setCartParam(cfg.station);
+      renderRole();
+      startCam();
+    }
+    if (!$('mAdmin').hidden && adminTab !== 'log') fillSettings();
+  }
+
+  // 送出還沒上傳的借還動作，順便拿回最新狀態；沒有要送的就只讀狀態
   function syncNow(opt) {
     opt = opt || {};
-    if (!cfg.gasUrl) return Promise.resolve();
     if (sync.busy) { sync.again = true; return Promise.resolve(); }
     sync.busy = true;
     renderSyncBadge();
-    var ids = Object.keys(dirty), sent = {};
-    var recs = ids.map(function (id) { return byId[id]; }).filter(Boolean);
+    var recs = Object.keys(dirty).map(function (id) { return byId[id]; }).filter(Boolean), sent = {};
     recs.forEach(function (r) { sent[r.id] = r.updated; });
-    var step = Promise.resolve();
-    if (recs.length || devicesDirty || opt.push) {
-      var payload = { station: cfg.station, loans: recs };
-      // 平板清單、感應卡名單一起備份到試算表（換新借還平板時可以還原）
-      if ((devicesDirty || opt.push) && cfg.cfgUpdated) {
-        payload.devices = devs.list.map(function (d) { return d.id; });
-        payload.config = backupCfg();
-        payload.cards = cfg.cards;
-      }
-      step = gasPost(payload).then(function (j) {
-        (j.saved || []).forEach(function (id) { var l = byId[id]; if (!l || l.updated === sent[id]) delete dirty[id]; });
-        if (payload.devices || !cfg.cfgUpdated) devicesDirty = false;
-        if (j.cfgAccepted === false) sync.lastPull = 0;  // 雲端設定比較新：馬上拉回來
-      });
-    }
-    return step.then(function () {
-      if (!opt.pull && Date.now() - sync.lastPull < 5 * 60e3) return;
-      var q = { action: 'pull', station: cfg.station, since: opt.full ? 0 : meta.pullSince, cfg: 1 };
-      return gasGet(q).then(function (j) {
-        var n = merge(j.loans);
-        // 往前重疊 5 秒，避免同一毫秒內寫入的紀錄被漏掉（合併時舊資料不會蓋掉新資料）
-        meta.pullSince = (j.time || Date.now()) - 5000;
-        sync.lastPull = Date.now();
-        if (n) reindex();
-        applyCloudCfg(j.config, j.cards, !!opt.full);
-        if (opt.full) toast('從雲端取回 ' + n + ' 筆新的或較新的紀錄', 'ok', 5000);
-      });
-    }).then(function () {
+    var req = recs.length
+      ? gasPost({ station: cfg.station, token: adminToken(), loans: recs })
+      : gasGet({ action: 'state', station: wantStation() });
+    return req.then(function (j) {
+      (j.saved || []).forEach(function (id) { var l = byId[id]; if (!l || l.updated === sent[id]) delete dirty[id]; });
+      applyState(j);
       sync.lastOk = Date.now(); sync.lastErr = '';
     }, function (e) {
       sync.lastErr = (e && e.message) || String(e);
-      if (opt.loud) toast('同步失敗：' + sync.lastErr, 'bad', 6000);
+      if (opt.loud) toast('連不上雲端：' + sync.lastErr, 'bad', 6000);
+      if (!srv.loaded && !cfg.setupDone) showWelcome('offline');
     }).then(function () {
       sync.busy = false;
       persist();
@@ -1183,128 +1224,93 @@
     });
   }
 
-  // 同一台平板車的所有借還平板共用這些設定（鏡頭、同步網址是每台自己的）
-  var BACKUP_KEYS = ['school', 'prefix', 'start', 'end', 'digits', 'extra', 'classes', 'auth', 'stuDomain', 'tchDomain', 'autoLogout', 'pin', 'cfgUpdated'];
-  function backupCfg() {
-    var o = {};
-    BACKUP_KEYS.forEach(function (k) { o[k] = cfg[k]; });
-    return o;
-  }
-
-  // 管理者改了共用設定：記下修改時間，推到雲端讓其他借還平板跟著更新
-  function markCfgChanged() {
-    cfg.cfgUpdated = Date.now();
-    TL.saveCfg(cfg);
-    devicesDirty = true;
-    queueSync();
-  }
-
-  // 雲端設定比這台新就直接套用；force＝管理者按「從雲端還原」
-  function applyCloudCfg(conf, cardsText, force) {
-    if (!conf) return false;
-    var newer = Number(conf.cfgUpdated || 0) > Number(cfg.cfgUpdated || 0);
-    if (!newer && force !== 'always') {
-      if (!force) return false;
-      var diff = BACKUP_KEYS.some(function (k) { return k !== 'cfgUpdated' && conf[k] !== undefined && String(conf[k]) !== String(cfg[k]); }) ||
-        (cardsText || '') !== (cfg.cards || '');
-      if (!diff || !confirm('這台的設定比雲端新。確定要用雲端的設定蓋掉這台嗎？')) return false;
-    }
-    BACKUP_KEYS.forEach(function (k) { if (conf[k] !== undefined) cfg[k] = conf[k]; });
-    cfg.cards = cardsText || '';
-    cfg.setupDone = true;
-    TL.saveCfg(cfg);
-    devs = TL.buildDevices(cfg); cards = TL.buildCards(cfg.cards);
-    if (!$('mAdmin').hidden) fillSettings();
-    renderAll(); renderRole();
-    toast('已套用雲端上「' + cfg.station + '」的設定（平板 ' + devs.list.length + ' 台、感應卡 ' + cards.count + ' 張）', 'ok', 5000);
-    return true;
-  }
-
-  // 新的借還平板：從雲端找已經設定好的平板車，一台就直接加入，多台讓管理者選
-  function joinFromCloud(quiet) {
-    if (!cfg.gasUrl) return Promise.resolve(false);
-    return gasGet({ action: 'stations' }).then(function (j) {
-      var list = j.stations || [];
-      if (!list.length) { if (!quiet) toast('雲端還沒有任何平板車的設定，請在這台完成設定', '', 6000); return false; }
-      if (list.length === 1) { adoptStation(list[0]); return true; }
-      $('stationList').innerHTML = list.map(function (st, i) {
-        var d = TL.buildDevices(st.config);
-        return '<button class="mb" data-i="' + i + '">' + esc(st.station) + '<small>' + d.list.length + ' 台平板' +
-          (d.list.length ? '（' + esc(d.list[0].id) + '…）' : '') + '</small></button>';
-      }).join('');
-      stationChoices = list;
-      ['mWelcome', 'mAdmin'].forEach(function (id) { $(id).hidden = true; });
-      openModal('mStation');
+  // 管理者存設定：直接寫進雲端（要通行證），成功後套用雲端回傳的版本
+  function saveCloud(extra) {
+    extra = extra || {};
+    var conf = {};
+    SHARED_KEYS.forEach(function (k) { conf[k] = cfg[k]; });
+    var payload = { action: 'config', token: adminToken(), station: cfg.station, config: conf, devices: TL.buildDevices(cfg).list.map(function (d) { return d.id; }) };
+    if (extra.cards != null) payload.cards = extra.cards;
+    if (extra.renamedFrom) payload.renamedFrom = extra.renamedFrom;
+    return gasPost(payload).then(function (j) {
+      applyState(j);
+      renderAll(); renderRole();
       return true;
     }, function (e) {
-      if (!quiet) toast('讀不到雲端設定：' + ((e && e.message) || e), 'bad', 6000);
+      if (!authFail(e)) toast('存到雲端失敗：' + ((e && e.message) || e) + '（需要網路）', 'bad', 6000);
+      syncNow();  // 拿回雲端上的設定，畫面不會停在沒存成功的內容
       return false;
     });
   }
-  var stationChoices = [];
 
-  function adoptStation(st) {
-    cfg.station = st.station;
-    meta.pullSince = 0;
-    applyCloudCfg(st.config, st.cards, 'always');
-    devicesDirty = false;
-    ['mWelcome', 'mAdmin', 'mStation'].forEach(function (id) { $(id).hidden = true; });
-    persist();
-    startCam();
-    syncNow({ pull: true, full: true });
-  }
-
-  // 連上雲端：設定過的平板直接同步；還沒上傳過設定的舊平板先問要用哪一邊；全新平板從雲端加入
-  function connectCloud() {
-    if (cfg.cfgUpdated) { devicesDirty = true; return syncNow({ push: true, pull: true, loud: true }); }
-    if (cfg.setupDone && confirm('這台已經有設定了。\n\n按「確定」：把這台的設定上傳到雲端（其他借還平板會跟著改）。\n按「取消」：改用雲端上已有的設定。')) {
-      markCfgChanged();
-      return syncNow({ push: true, pull: true, loud: true });
+  // 歡迎畫面：none＝雲端還沒有平板車、pick＝有多台車要選、offline＝連不上雲端
+  function showWelcome(kind) {
+    if (kind === 'pick') {
+      $('stationList').innerHTML = srv.stations.map(function (name, i) {
+        return '<button class="mb" data-i="' + i + '">' + esc(name) + '</button>';
+      }).join('');
+      $('mWelcome').hidden = true;
+      openModal('mStation');
+      return;
     }
-    return joinFromCloud(false).then(function (joined) { if (!joined) return syncNow({ pull: true, loud: true }); });
+    $('welcomeMsg').innerHTML = kind === 'offline'
+      ? '⚠️ 連不上雲端，請確認網路後按「重新連線」。'
+      : '雲端上還沒有任何平板車。管理者請按下面的按鈕建立第一台。';
+    $('btnRetry').hidden = kind !== 'offline';
+    $('btnSetupHere').hidden = kind === 'offline';
+    openModal('mWelcome');
   }
 
-  // 設定連結：新平板用相機掃這個 QR 就會開啟借還站並自動加入
-  function setupLink() { return location.origin + location.pathname + '#gas=' + encodeURIComponent(cfg.gasUrl); }
+  function chooseStation(name) {
+    cfg.station = name; cfg.setupDone = false;
+    TL.saveCfg(cfg);
+    setCartParam(name);
+    $('mStation').hidden = true;
+    syncNow({ loud: true });
+  }
+
+  // 建立新的平板車：先驗證管理密碼，再填設定
+  function createStation() {
+    askPin(function () {
+      ['mWelcome', 'mStation'].forEach(function (id) { $(id).hidden = true; });
+      cfg.setupDone = false;
+      openAdmin('set');
+      $('sStation').value = srv.stations.length ? '' : '平板車A';
+    });
+  }
+
+  function setupLink() { return location.origin + location.pathname + '?cart=' + encodeURIComponent(cfg.station); }
 
   function renderSyncBadge() {
     var el = $('sync'), n = Object.keys(dirty).length;
     el.classList.remove('err');
-    if (!cfg.gasUrl) { el.textContent = ''; return; }
-    if (sync.busy) el.textContent = '☁️ 同步中…';
-    else if (sync.lastErr) { el.textContent = '⚠️ 離線' + (n ? '・' + n + ' 筆待上傳' : ''); el.classList.add('err'); }
-    else if (n) el.textContent = '⏫ ' + n + ' 筆待上傳';
-    else if (sync.lastOk) el.textContent = '☁️ 已同步';
+    if (sync.busy && !sync.lastOk) el.textContent = '☁️ 連線中…';
+    else if (sync.lastErr) { el.textContent = '⚠️ 離線' + (n ? '・' + n + ' 筆待送出' : ''); el.classList.add('err'); }
+    else if (n) el.textContent = '⏫ ' + n + ' 筆送出中';
+    else if (sync.lastOk) el.textContent = '☁️ 雲端';
     else el.textContent = '';
   }
 
   function renderSyncInfo() {
     var n = Object.keys(dirty).length;
-    $('syncInfo').innerHTML = !cfg.gasUrl ? '目前是<b>本機模式</b>：紀錄和設定只存在這台借還平板裡，換平板設定就不見了。' :
-      '狀態：<b>' + (sync.busy ? '同步中…' : sync.lastErr ? '⚠️ ' + esc(sync.lastErr) : sync.lastOk ? '正常' : '尚未同步') + '</b><br>' +
-      '待上傳：<b>' + n + '</b> 筆<br>' +
-      '上次成功：<b>' + (sync.lastOk ? esc(full(sync.lastOk)) : '—') + '</b><br>' +
+    $('syncInfo').innerHTML =
+      '狀態：<b>' + (sync.busy ? '連線中…' : sync.lastErr ? '⚠️ ' + esc(sync.lastErr) : sync.lastOk ? '正常' : '尚未連線') + '</b><br>' +
+      '待送出的借還動作：<b>' + n + '</b> 筆<br>' +
+      '上次和雲端同步：<b>' + (sync.lastOk ? esc(full(sync.lastOk)) : '—') + '</b><br>' +
       '設定最後修改：<b>' + (cfg.cfgUpdated ? esc(full(cfg.cfgUpdated)) : '—') + '</b>';
-    $('setupBox').hidden = !cfg.gasUrl;
-    if (cfg.gasUrl) $('setupQr').innerHTML = TL.qrSvg(setupLink());
+    $('setupQr').innerHTML = TL.qrSvg(setupLink());
+    $('setupUrl').textContent = decodeURIComponent(setupLink());
+    $('sGas').value = cfg.gasUrl || '';
   }
 
+  // 進階：改用別的後端網址（測試用；留白＝預設）
   function saveGas() {
     var url = $('sGas').value.trim();
-    if (url && !/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(url)) { toast('網址看起來不是 Apps Script 網頁應用程式（https://script.google.com/macros/s/…/exec）', 'bad', 6000); return; }
+    if (url && !/^https?:\/\/.+/.test(url)) { toast('網址格式不對', 'bad'); return; }
     cfg.gasUrl = url;
     TL.saveCfg(cfg);
-    renderSyncBadge();
-    if (!url) { renderSyncInfo(); toast('已改回本機模式', 'ok'); return; }
-    $('syncInfo').innerHTML = '測試連線中…';
-    gasGet({ action: 'ping' }).then(function (j) {
-      toast('連線成功' + (j.sheet ? '：' + j.sheet : ''), 'ok', 5000);
-      return connectCloud();
-    }, function (e) {
-      toast('連不上：' + ((e && e.message) || e) + '。請確認部署時「誰可以存取」選「所有人」。', 'bad', 8000);
-      sync.lastErr = (e && e.message) || String(e);
-      renderSyncInfo(); renderSyncBadge();
-    });
+    toast(url ? '已改用自訂後端' : '已改回預設後端', 'ok');
+    syncNow({ loud: true });
   }
 
   // ---------- 事件 ----------
@@ -1380,13 +1386,15 @@
     });
     $('saveCards').addEventListener('click', saveCards);
     $('stationList').addEventListener('click', function (e) {
-      var b = e.target.closest('button[data-i]'); if (b) adoptStation(stationChoices[+b.dataset.i]);
+      var b = e.target.closest('button[data-i]'); if (b) chooseStation(srv.stations[+b.dataset.i]);
     });
-    $('stationNew').addEventListener('click', function () { closeModal('mStation'); cfg.setupDone = false; openAdmin('set'); });
+    $('stationNew').addEventListener('click', createStation);
+    $('btnSetupHere').addEventListener('click', createStation);
+    $('btnRetry').addEventListener('click', function () { $('mWelcome').hidden = true; syncNow({ loud: true }); });
     $('copySetup').addEventListener('click', function () {
       var link = setupLink();
       (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(function () {
-        toast('已複製設定連結，可以傳到新的借還平板上開啟', 'ok');
+        toast('已複製借還站網址，可以傳到新的借還平板上開啟', 'ok');
       }, function () { window.prompt('請複製這個設定連結：', link); });
     });
     $('sCards').addEventListener('input', renderCardCount);
@@ -1405,7 +1413,7 @@
     $('btnGoogle').addEventListener('click', googleSignIn);
     $('btnConfirm').addEventListener('click', confirmBorrow);
 
-    $('btnStatus').addEventListener('click', function () { renderStatus(); openModal('mStatus'); if (cfg.gasUrl) syncNow({ pull: true }); });
+    $('btnStatus').addEventListener('click', function () { renderStatus(); openModal('mStatus'); syncNow(); });
     $('btnAdmin').addEventListener('click', function () { askPin(function () { openAdmin(); }); });
 
     document.addEventListener('click', function (e) {
@@ -1413,7 +1421,7 @@
       if (c) closeModal(c.closest('.modal').id);
     });
     [].forEach.call(document.querySelectorAll('.modal'), function (m) {
-      m.addEventListener('click', function (e) { if (e.target === m && m.id !== 'mWelcome' && (m.id !== 'mAdmin' || cfg.setupDone)) closeModal(m.id); });
+      m.addEventListener('click', function (e) { if (e.target === m && m.id !== 'mWelcome' && m.id !== 'mStation' && (m.id !== 'mAdmin' || cfg.setupDone)) closeModal(m.id); });
     });
 
     $('statusFilters').addEventListener('click', function (e) {
@@ -1445,45 +1453,42 @@
       var b = e.target.closest('button[data-r]'); if (!b) return;
       logRange = +b.dataset.r;
       [].forEach.call(this.querySelectorAll('button[data-r]'), function (x) { x.classList.toggle('on', x === b); });
-      renderLog();
+      loadLog();
     });
     $('logQ').addEventListener('input', renderLog);
     $('btnCsv').addEventListener('click', exportCsv);
     $('logTable').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-act]'); if (!b) return;
-      var l = byId[b.dataset.id]; if (!l) return;
+      var l = adminLog.filter(function (x) { return x.id === b.dataset.id; })[0]; if (!l) return;
       if (b.dataset.act === 'lret') { l.inAt = Date.now(); }
       else if (b.dataset.act === 'lvoid') { if (!confirm('把 ' + l.device + '（' + l.name + '）這筆紀錄作廢？作廢後視為沒有借出。')) return; l.void = true; }
       else if (b.dataset.act === 'lunvoid') {
-        if (!l.inAt && openByDev[TL.norm(l.device)]) { toast(l.device + ' 目前已被別人借出，不能還原這筆', 'bad'); return; }
+        var cur = openByDev[TL.norm(l.device)];
+        if (!l.inAt && cur && cur.id !== l.id) { toast(l.device + ' 目前已被別人借出，不能還原這筆', 'bad'); return; }
         l.void = false;
       }
-      touch(l); changed();
+      l.updated = Date.now();
+      // 管理動作直接送雲端（作廢要通行證）
+      gasPost({ station: cfg.station, token: adminToken(), loans: [l] }).then(function (j) {
+        applyState(j); renderAll(); loadLog();
+      }, function (err) { if (!authFail(err)) toast('沒有存到雲端：' + ((err && err.message) || err), 'bad', 6000); loadLog(); });
     });
     ['sPrefix', 'sStart', 'sEnd', 'sDigits', 'sExtra'].forEach(function (id) { $(id).addEventListener('input', renderDevPreview); });
     $('saveDev').addEventListener('click', saveDev);
     $('saveSet').addEventListener('click', saveSet);
-    $('btnWipe').addEventListener('click', wipe);
     $('saveGas').addEventListener('click', saveGas);
     $('syncNowBtn').addEventListener('click', function () {
-      if (!cfg.gasUrl) { toast('請先填 Apps Script 網址', 'bad'); return; }
-      syncNow({ push: true, pull: true, loud: true }).then(function () { if (!sync.lastErr) toast('同步完成', 'ok'); });
-    });
-    $('restoreBtn').addEventListener('click', function () {
-      if (!cfg.gasUrl) { toast('請先填 Apps Script 網址', 'bad'); return; }
-      syncNow({ pull: true, full: true, loud: true });
+      syncNow({ loud: true }).then(function () { if (!sync.lastErr) toast('已從雲端重新載入', 'ok'); });
     });
 
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden') { stopCam(true); }
-      else { wake(); renderAll(); queueSync(); if (cfg.setupDone) startCam(); }
+      else { wake(); renderAll(); syncNow(); if (cfg.setupDone && !anyModalOpen()) startCam(); }
     });
     window.addEventListener('online', function () { queueSync(); });
     window.addEventListener('resize', layoutAim);
     $('video').addEventListener('loadedmetadata', layoutAim);
-    window.addEventListener('storage', function (e) {
-      if (e.key === TL.KEY_CFG) { cfg = TL.loadCfg(); devs = TL.buildDevices(cfg); cards = TL.buildCards(cfg.cards); renderAll(); }
-    });
+
   }
 
   // ---------- 啟動 ----------
@@ -1494,34 +1499,22 @@
   tickClock();
   setInterval(tickClock, 15e3);
   setInterval(idleCheck, 5e3);
+  // 有人在用時每 30 秒跟雲端對一次（看得到其他借還平板的動作），沒人用時 3 分鐘一次
   setInterval(function () {
     renderBar();
-    if (cfg.gasUrl && (Object.keys(dirty).length || Date.now() - sync.lastPull > 5 * 60e3)) syncNow();
-  }, 60e3);
-  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    if (document.visibilityState !== 'visible') return;
+    var due = camOn || Date.now() - lastAct < 5 * 60e3 ? 30e3 : 180e3;
+    if (Object.keys(dirty).length || Date.now() - sync.lastOk >= due) syncNow();
+  }, 15e3);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
 
-  // 設定連結：借還站網址#gas=Apps Script 網址，開一次就填好雲端同步（不用在 iPad 上手打長網址）
-  var hashGas = /[#&]gas=([^&]+)/.exec(location.hash);
-  if (hashGas) {
-    var g = decodeURIComponent(hashGas[1]);
-    if (/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(g)) {
-      cfg.gasUrl = g; TL.saveCfg(cfg);
-      setTimeout(function () { toast('已設定雲端同步（Google 試算表）', 'ok', 5000); }, 500);
-      if (!cfg.cfgUpdated) hashJoin = true;
-    }
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-  }
+  // 舊版的設定連結（#gas=…）：雲端網址已內建，不需要了
+  if (/[#&]gas=/.test(location.hash)) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
   if (cfg.auth === 'google') loadFirebase().catch(function () {});
-  if (!cfg.setupDone) {
-    // 一般人在自己的裝置打開時先看到說明；管理者再按「設定成借還平板」
-    openModal('mWelcome');
-    $('btnSetupHere').addEventListener('click', function () { closeModal('mWelcome'); openAdmin('set'); });
-  } else {
-    startCam();
-    if (cfg.gasUrl && !hashJoin) syncNow({ pull: true });
-  }
-  if (hashJoin) setTimeout(connectCloud, 300);
+  // 這台平板上有快取的設定就先開鏡頭；同時向雲端拿最新設定與借用狀態
+  if (cfg.setupDone && (!cartParam() || cartParam() === cfg.station)) startCam();
+  else { $('welcomeMsg').textContent = '正在連線雲端…'; $('btnRetry').hidden = true; $('btnSetupHere').hidden = true; openModal('mWelcome'); }
+  syncNow();
 
   // 測試用：在主控台 TLdebug.scan('iPad-01') 模擬掃描
   // fakeCamera(stream)：用 canvas.captureStream() 之類的影像代替鏡頭，測試解碼流程
@@ -1529,7 +1522,6 @@
     scan: function (t) { onCode(t, 'manual'); },
     loans: function () { return loans; },
     fakeCamera: function (s) { stopCam(false); startCam(s); },
-    connect: function () { return connectCloud(); },
-    sync: function () { sync.lastPull = 0; return syncNow({ pull: true }); }
+    sync: function () { return syncNow(); }
   };
 })();

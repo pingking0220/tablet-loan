@@ -410,10 +410,11 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
       <div style="font-size:60px;line-height:1">📱</div>
       <h2 style="font-size:24px;font-weight:900;margin:10px 0 8px">平板借還站</h2>
       <p class="note" style="font-size:16px;line-height:1.8;margin-bottom:18px">這個網頁是給<b>平板車上的「借還平板」</b>用的。<br>老師、同學要借還平板，請到平板車上操作。</p>
-      <p class="note" style="font-size:14px;line-height:1.7;margin:-8px 0 16px">管理者：已經有其他借還平板設定好了嗎？到那台的「管理 → 雲端同步」，用這台的相機掃「設定 QR Code」就能直接加入。</p>
+      <p class="note" id="welcomeMsg" style="font-size:15px;line-height:1.7;margin:-6px 0 16px;color:var(--ink)">正在連線雲端…</p>
       <div class="mbtns">
-        <a class="mb blue" href="guide.html" style="display:flex;align-items:center;justify-content:center;text-decoration:none">看怎麼借還平板</a>
-        <button class="mb" id="btnSetupHere">我是管理者：把這台設定成借還平板</button>
+        <button class="mb blue" id="btnRetry" hidden>重新連線</button>
+        <a class="mb" href="guide.html" style="display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit">看怎麼借還平板</a>
+        <button class="mb" id="btnSetupHere" hidden>我是管理者：建立平板車</button>
         <a class="mb" href="https://pingking0220.github.io/" style="display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit">🏠 回行政服務首頁</a>
       </div>
     </div>
@@ -426,7 +427,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
     <div class="sh"><h2>📲 這台要當哪一台平板車的借還站？</h2></div>
     <div class="sb">
       <div class="mbtns stations" id="stationList"></div>
-      <button class="mb" id="stationNew" style="margin-top:10px;width:100%">都不是，設定一台新的平板車</button>
+      <button class="mb" id="stationNew" style="margin-top:10px;width:100%">都不是，建立一台新的平板車（要管理密碼）</button>
     </div>
   </div>
 </div>
@@ -489,7 +490,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
       <button data-t="dev">平板清單</button>
       <button data-t="set">基本設定</button>
       <button data-t="card">感應卡</button>
-      <button data-t="cloud">雲端同步</button>
+      <button data-t="cloud">雲端</button>
       <button data-t="label">列印條碼</button>
     </div>
     <div class="sb">
@@ -526,7 +527,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
 
       <!-- 基本設定 -->
       <div data-p="set" hidden>
-        <div class="welcome" id="welcome" hidden><b>👋 第一次使用</b><br>請確認平板車名稱、平板編號（「平板清單」分頁）並改掉預設管理密碼 <b>1234</b>，按「儲存設定」後就可以開始借還。</div>
+        <div class="welcome" id="welcome" hidden><b>👋 建立平板車</b><br>填好平板車名稱，按「儲存設定」就會建立在雲端；接著到「平板清單」設定平板編號。第一次使用請順便把預設管理密碼 <b>1234</b> 改掉（所有借還平板共用）。</div>
         <div class="card">
           <h3>借還站</h3>
           <div class="g2">
@@ -538,7 +539,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
               <select id="sCamera"><option value="user">前鏡頭（借還平板立著、面向使用者）</option><option value="environment">後鏡頭</option></select></label>
             <label class="fl"><span>每個年級有幾班</span><input id="sClasses" type="number" min="1" max="20"></label>
           </div>
-          <label class="fl"><span>管理密碼（4～6 位數字）</span><input id="sPin" inputmode="numeric" maxlength="6"></label>
+          <label class="fl"><span>修改管理密碼（4～6 位數字；留白＝不改；所有借還平板共用，存在雲端）</span><input id="sPin" inputmode="numeric" maxlength="6" placeholder="不改就留白" autocomplete="off"></label>
         </div>
         <div class="card">
           <h3>借用人身分驗證</h3>
@@ -554,8 +555,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
         <div class="brow"><button class="btn pri" id="saveSet">儲存設定</button></div>
         <div class="card" style="margin-top:16px">
           <h3>資料</h3>
-          <div class="note">借用紀錄存在這台借還平板裡；建議設定「雲端同步」自動備份到 Google 試算表，或定期匯出 CSV。</div>
-          <div class="brow"><button class="btn danger" id="btnWipe">清除這台的所有借用紀錄</button></div>
+          <div class="note">借用紀錄和設定都存在雲端（it@lsps.tp.edu.tw 的 Google 試算表「平板借還紀錄」），這台平板不存資料；換平板、清除瀏覽器資料都不影響。</div>
         </div>
       </div>
 
@@ -596,26 +596,26 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
       <!-- 雲端同步 -->
       <div data-p="cloud" hidden>
         <div class="card">
-          <h3>Google 試算表同步（選用）</h3>
-          <div class="note">設定後每次借還都會自動寫進 Google 試算表的「借用紀錄」，「現況」工作表會顯示每台平板目前在誰手上；在辦公室電腦打開試算表就能查。網路斷線時會先存在平板裡，恢復連線後自動補傳。</div>
-          <label class="fl" style="margin-top:10px"><span>Apps Script 網址（…/exec）</span><input id="sGas" placeholder="https://script.google.com/macros/s/……/exec" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-          <div class="brow">
-            <button class="btn pri" id="saveGas">儲存並測試</button>
-            <button class="btn" id="syncNowBtn">立即同步</button>
-            <button class="btn" id="restoreBtn">從雲端還原紀錄</button>
-          </div>
+          <h3>☁️ 雲端</h3>
+          <div class="note">借用紀錄、設定、感應卡名單都存在 it@lsps.tp.edu.tw 的 Google 試算表；試算表的「現況」工作表會顯示每台平板目前在誰手上。網路斷線時，借還動作會先暫存，連上後自動送出。</div>
           <div class="syncinfo" id="syncInfo"></div>
+          <div class="brow"><button class="btn" id="syncNowBtn">從雲端重新載入</button></div>
         </div>
-        <div class="card" id="setupBox" hidden>
+        <div class="card" id="setupBox">
           <h3>📲 新增或更換借還平板</h3>
           <div class="setupwrap">
             <div class="setupqr" id="setupQr"></div>
-            <div class="note">用新 iPad 的<b>「相機」</b>掃這個 QR Code，會用 Safari 開啟借還站並<b>自動套用這台平板車的所有設定</b>（平板清單、管理密碼、感應卡、身分驗證…）。<br><br>
-              之後任何一台改了設定，其他借還平板 5 分鐘內會自動跟著更新。<br><br>
-              ⚠️ 這個 QR Code 等於同步網址，請不要讓學生拍照。</div>
+            <div class="note">新 iPad 用<b>「相機」</b>掃這個 QR Code（或直接開下面的網址），就會打開<b>這台平板車</b>的借還站，設定自動從雲端載入，不用再設定。<br><br>
+              <span id="setupUrl" style="word-break:break-all;color:var(--ink)"></span><br><br>
+              建議把這個網址加入 Safari 書籤（或用 Jamf 推送網頁捷徑），以後就從這裡打開。</div>
           </div>
-          <div class="brow"><button class="btn" id="copySetup">複製設定連結</button></div>
+          <div class="brow"><button class="btn" id="copySetup">複製網址</button></div>
         </div>
+        <details class="card">
+          <summary class="note" style="cursor:pointer">進階：自訂後端網址（測試用）</summary>
+          <label class="fl" style="margin-top:10px"><span>Apps Script 網址（留白＝使用預設的 it@ 後端）</span><input id="sGas" placeholder="留白＝預設" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+          <div class="brow"><button class="btn" id="saveGas">儲存</button></div>
+        </details>
       </div>
 
       <!-- 列印條碼 -->
@@ -637,7 +637,7 @@ table.log button{height:34px;padding:0 10px;border-radius:10px;background:#EEF2F
 
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/zxing-reader.js"></script>
-<script src="common.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="common.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

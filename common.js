@@ -3,17 +3,18 @@
   'use strict';
 
   var KEY_CFG = 'tl.cfg';
+  // 雲端後端（it@lsps.tp.edu.tw 的 Apps Script）。資料都在雲端，任何裝置打開借還站就能直接用。
+  // 公開也沒關係：查詢只回傳遮蔽過的姓名；看完整紀錄、改設定都要管理密碼（由雲端驗證）。
+  var API = 'https://script.google.com/macros/s/AKfycbykgiEQ1ycTaMqATV8WmY4kYMS3hIE8nzpcZiF6hnxVkCNUtIFHdVKRXqCjJu1JJZynQQ/exec';
 
   var DEFAULT_CFG = {
     school: '力行國小',
-    station: '平板車A',      // 借還站（平板車）名稱，寫進紀錄的「借還站」欄
+    station: '',             // 平板車名稱（由網址 ?cart= 或雲端決定）
     prefix: 'iPad-',
     start: 1,
     end: 30,
     digits: 2,
     extra: '',               // 每行「編號」或「編號,其他條碼(財產編號/序號/感應貼紙卡號)」
-    cards: '',               // 借用人感應卡：每行「卡號,姓名,身分,班級座號」
-    pin: '1234',
     camera: 'user',          // user=前鏡頭（平板立在車上面向使用者） environment=後鏡頭
     classes: 8,              // 每個年級的班級數（不登入模式：學生借用時的班級按鈕）
     auth: 'google',          // google=借用人用學校 Google 帳號登入；manual=點班級座號／打姓名
@@ -137,7 +138,7 @@
   if (global.qrcode) global.qrcode.stringToBytes = global.qrcode.stringToBytesFuncs['UTF-8'];
 
   global.TL = {
-    KEY_CFG: KEY_CFG, DEFAULT_CFG: DEFAULT_CFG,
+    KEY_CFG: KEY_CFG, DEFAULT_CFG: DEFAULT_CFG, API: API,
     lsGet: lsGet, lsSet: lsSet, loadCfg: loadCfg, saveCfg: saveCfg,
     norm: norm, pad: pad, rangeIds: rangeIds, buildDevices: buildDevices, buildCards: buildCards,
     personCode: personCode, parsePerson: parsePerson, qrSvg: qrSvg, qrModules: qrModules, esc: esc

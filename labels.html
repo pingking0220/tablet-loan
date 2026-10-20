@@ -177,7 +177,7 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
 
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/JsBarcode.all.min.js"></script>
-<script src="common.js?v=5"></script>
+<script src="common.js?v=6"></script>
 <script>
 (function () {
   'use strict';
@@ -421,26 +421,42 @@ textarea{resize:vertical;min-height:84px;line-height:1.6}
   window.addEventListener('resize', scalePreview);
   if (/[?&]mode=person/.test(location.search)) setMode('person'); else setMode('dev');
 
-  // 這台電腦有連雲端（用借還站的設定連結開過）：直接用雲端上的平板清單，避免和借還站對不上
-  function useCloud(st) {
-    var c = st.config || {};
+  // 平板清單以雲端為準（和借還站一致）；雲端有多台平板車時可以切換
+  function useCloud(j) {
+    var c = j.config || {};
     $('prefix').value = c.prefix || ''; $('start').value = c.start; $('end').value = c.end; $('digits').value = c.digits;
     $('extraIds').value = String(c.extra || '').split(/\r?\n/).map(function (l) { return l.split(/[,，\t]/)[0].trim(); }).filter(Boolean).join('\n');
-    if (mode === 'dev') $('title').value = ((c.school || cfg.school) + ' ' + st.station).trim();
-    $('cloudNote').innerHTML = '☁️ 已套用雲端上「<b>' + TL.esc(st.station) + '</b>」的平板清單，和借還站一致。';
+    if (mode === 'dev') $('title').value = ((c.school || cfg.school) + ' ' + j.station).trim();
     render();
   }
-  if (cfg.gasUrl) {
-    fetch(cfg.gasUrl + (cfg.gasUrl.indexOf('?') < 0 ? '?' : '&') + 'action=stations', { redirect: 'follow' })
+  function cartPicker(j) {
+    if (!j.stations || j.stations.length < 2) return '';
+    return ' <select id="cartSel" style="width:auto;padding:4px 8px;font-size:13px">' + j.stations.map(function (n) {
+      return '<option' + (n === j.station ? ' selected' : '') + '>' + TL.esc(n) + '</option>';
+    }).join('') + (j.station ? '' : '<option selected disabled>請選平板車</option>') + '</select>';
+  }
+  function loadCloud(station) {
+    var u = cfg.gasUrl || TL.API;
+    $('cloudNote').textContent = '☁️ 從雲端讀取平板清單…';
+    fetch(u + (u.indexOf('?') < 0 ? '?' : '&') + 'action=state&station=' + encodeURIComponent(station || ''), { redirect: 'follow' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        var list = (j && j.stations) || [];
-        var st = list.filter(function (s) { return s.station === cfg.station; })[0] || (list.length === 1 ? list[0] : null);
-        if (st) useCloud(st);
-      }).catch(function () {});
-  } else {
-    $('cloudNote').innerHTML = '⚠️ 這台電腦沒有連上雲端，請確認編號和借還站「管理 → 平板清單」一致。<br>在這台電腦開一次借還站的「設定連結」，以後就會自動帶入。';
+        if (!j || !j.ok) throw new Error('bad');
+        if (!j.stations.length) { $('cloudNote').innerHTML = '雲端還沒有平板車，請先在借還站建立；現在用的是上面填的編號。'; return; }
+        if (j.station) {
+          useCloud(j);
+          $('cloudNote').innerHTML = '☁️ 已套用雲端上「<b>' + TL.esc(j.station) + '</b>」的平板清單，和借還站一致。' + cartPicker(j);
+        } else {
+          $('cloudNote').innerHTML = '☁️ 雲端有多台平板車，要印哪一台的？' + cartPicker(j);
+        }
+        var sel = document.getElementById('cartSel');
+        if (sel) sel.addEventListener('change', function () { loadCloud(sel.value); });
+      }).catch(function () {
+        $('cloudNote').innerHTML = '⚠️ 連不上雲端，請確認編號和借還站「管理 → 平板清單」一致。';
+      });
   }
+  var cartQ = /[?&]cart=([^&#]+)/.exec(location.search);
+  loadCloud(cartQ ? decodeURIComponent(cartQ[1].replace(/\+/g, ' ')) : cfg.station);
 })();
 </script>
 </body>
