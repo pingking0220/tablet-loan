@@ -87,3 +87,5 @@ python -m http.server 8766 --directory C:/Users/User/tablet-loan
 ```
 
 瀏覽器主控台可用 `TLdebug.scan('iPad-01')` 模擬掃描。相機需要 https 或 localhost。
+
+改了 `common.js` 或 `app.js` 之後，記得把 `index.html`、`labels.html` 裡的 `?v=` 版本號加一，並把 `sw.js` 的 `CACHE` 版本加一；不然 GitHub Pages 的 10 分鐘快取會讓新舊檔案混在一起。

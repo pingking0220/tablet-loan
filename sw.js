@@ -1,5 +1,5 @@
 /* 平板借還站 — 離線快取：網路優先，斷線時用快取（學校網路斷了借還站照樣能開） */
-var CACHE = 'tablet-loan-v2';
+var CACHE = 'tablet-loan-v3';
 var SHELL = ['./', 'index.html', 'app.js', 'common.js', 'labels.html', 'guide.html', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png',
   'vendor/html5-qrcode.min.js', 'vendor/qrcode.js', 'vendor/JsBarcode.all.min.js'];
 
@@ -16,7 +16,8 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   var req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;  // Apps Script、字型不經過快取
-  e.respondWith(fetch(req).then(function (res) {
+  // no-cache：每次都向伺服器確認（沒變只回 304），避免 GitHub Pages 的 10 分鐘快取讓新舊檔案混在一起
+  e.respondWith(fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(function (res) {
     if (res && res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); }
     return res;
   }).catch(function () {
